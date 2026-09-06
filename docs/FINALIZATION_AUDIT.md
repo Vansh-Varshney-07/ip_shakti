@@ -4,7 +4,7 @@
 
 Audit date: 2026-09-06
 
-The current repository is `C:\Users\vvars\OneDrive\Desktop\sih rag` at commit `cf2a4f7`.
+The current repository is `C:\Users\vvars\OneDrive\Desktop\sih rag` at the latest pushed finalization commit.
 The historical architecture files are available in Git commit `403ecdb`, but the
 `architecture/` directory is absent from the current working tree and ignored by
 `.gitignore`.
@@ -21,7 +21,7 @@ or explicitly adopted.
 
 - API to RAG pipeline: connected.
 - Query analysis and rewriting: connected.
-- Basic jurisdiction detection and metadata filtering: partially connected.
+- Explicit India/International jurisdiction selection and metadata filtering: connected.
 - Ingestion to chunking and authority enrichment: connected.
 - Ingestion to the API retrieval index: connected through the shared retrieval engine.
 - Dense retrieval: real sentence-transformer provider in normal mode; deterministic mock only in explicit test mode.
@@ -29,8 +29,8 @@ or explicitly adopted.
 - Generation: NVIDIA NIM OpenAI-compatible provider in normal mode; explicit extractive test mode.
 - Citation stage: repairs absent citation markers and validation remains enforced.
 - API citation/evidence mapping: now maps retrieved chunks and source provenance.
-- Knowledge graph: separate and not on the main query path.
-- Frontend to backend: same-origin API client for query, documents, and health; upload reports unsupported contract instead of simulating success.
+- Knowledge graph: local NetworkX graph rehydrates from the persisted corpus and contributes graph evidence to canonical retrieval.
+- Frontend to backend: same-origin API client for query, documents, health, ingestion, temporary PDF context, and facilitator escalation.
 
 ## Configuration and Runtime Divergences
 
@@ -51,7 +51,7 @@ test mode may use local deterministic substitutes.
 - Main RAG citation stage was empty (implemented).
 - API responses discarded evidence and citations (implemented).
 - Frontend used canned answers, random metrics, and simulated ingestion (removed).
-- No current Docker deployment or integration test suite.
+- Docker deployment and focused integration smoke coverage are present; broader evaluation remains a follow-up concern.
 
 ## Corpus Risks
 
@@ -66,8 +66,8 @@ under `data/quarantine/corpus-invalid-2026-09-06/`; the authoritative
 - In-memory API keys and rate limits.
 - Development JWT key generation.
 - Malware scanning placeholder.
-- No verified end-to-end trace propagation.
-- No persistent ingestion job state.
+- No external SIEM/trace backend; local privacy-conscious JSONL query and escalation audit records are enabled.
+- No durable multi-process ingestion job state.
 
 ## Finalization Policy
 

@@ -8,11 +8,11 @@
 | Ingestion to retrieval | IMPLEMENTED | Index stage calls retrieval engine | Shared in-process index | Pending | Add persistence |
 | Embeddings | IMPLEMENTED | Real sentence-transformer provider in normal mode | Explicit mock only in test mode | Pending | Verify model availability |
 | Persistent storage | IMPLEMENTED | SQLite-backed vector/chunk store | Sparse index rebuilds on restart | Smoke verified | Migrate to managed DB for horizontal scale |
-| Retrieval | PARTIAL | Hybrid engine exists | Partial | Pending | Trace results and filters |
+| Retrieval | IMPLEMENTED | Semantic, lexical, hybrid, graph, and contrastive retrieval | Shared engine with jurisdiction filters | Smoke verified | External scale-out is optional |
 | Generation | IMPLEMENTED | NVIDIA NIM OpenAI-compatible Chat Completions provider in normal mode; extractive test mode | Connected to canonical RAG path | Config verified; live call requires key | Requires `NVIDIA_API_KEY` and selected model |
 | Citation verification | IMPLEMENTING | Citation stage now repairs missing markers; validator remains | Connected to response mapper | Pending | Add claim-level verification |
 | API response | IMPLEMENTED | Response maps citations and retrieved chunks | Provenance retained | Pending | Add endpoint integration tests |
-| Frontend | IMPLEMENTED | Same-origin API client | Query/documents/health connected | Node syntax passes | Add multipart upload contract |
+| Frontend | IMPLEMENTED | Same-origin API client | Query, documents, health, uploads, confidence, and escalation connected | Node syntax passes | Browser regression coverage can expand |
 | Corpus validation | IMPLEMENTED | `ingestion/corpus_validation.py` and quarantine directory | Authoritative corpus excludes invalid/duplicate files | Verified: 23 files valid | Replace quarantined sources from official originals |
 | Deployment | IMPLEMENTED | Dockerfile, Compose, `.env.example` | API container and healthcheck | Syntax/static checks | Supply production secrets and model cache |
 
