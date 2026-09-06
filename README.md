@@ -163,7 +163,13 @@ The web frontend (`/web`) provides:
 
 ## Evaluation
 
-The workflow smoke suite contains 20 deliberately different prompts covering formulation classification, patents, trademarks, GI, ABS, TK, procedures, compliance, international systems, multilingual input, and clarification behavior. It is stored at `docs/prompt_suite.json`.
+The workflow smoke suite contains 20 deliberately different prompts covering formulation classification, patents, trademarks, GI, ABS, TK, procedures, compliance, international systems, multilingual input, and clarification behavior. It is stored at `docs/prompt_suite.json`. A broader 30-case persona/jurisdiction/language corpus is stored at `docs/prompt_suite_30.txt`.
+
+Run the authenticated 30-case workflow runner against the local API. It writes raw JSONL records, a machine-readable summary, and a log under the ignored `artifacts/prompt-runs/` directory:
+```bash
+BASE_URL=http://127.0.0.1:8000 bash scripts/run_prompt_suite.sh
+```
+The runner records HTTP status, intent, jurisdiction, retrieved/cited counts, confidence, positive/negative search counts, warnings, abstentions, and elapsed time for every prompt.
 
 Run comprehensive evaluation:
 ```bash

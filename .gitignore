@@ -67,6 +67,9 @@ htmlcov/
 *.onnx
 *.safetensors
 
+# Local prompt-suite outputs can contain generated answers and user-like test data
+artifacts/prompt-runs/
+
 # Cache
 .cache/
 .pytest_cache/
