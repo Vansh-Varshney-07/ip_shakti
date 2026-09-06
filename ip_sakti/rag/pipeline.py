@@ -546,7 +546,7 @@ class ContextBuilder:
             'document_id': chunk.document_id,
             'content_preview': chunk.content[:200] + "..." if len(chunk.content) > 200 else chunk.content,
             'score': result.score,
-            'reranked_score': result.reranked_score,
+            'reranked_score': getattr(result, 'reranked_score', None),
             'authority_score': chunk.metadata.get('authority_score'),
             'source_tier': chunk.metadata.get('source_authority_tier'),
             'jurisdiction': chunk.metadata.get('jurisdiction'),
