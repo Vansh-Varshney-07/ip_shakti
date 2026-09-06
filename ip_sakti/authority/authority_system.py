@@ -928,7 +928,16 @@ class SourceAuthoritySystem:
     
     def get_tier_score(self, tier: AuthorityTier) -> float:
         """Get weight score for authority tier."""
-        return tier.weight
+        # AuthorityTier is an integer enum, not a settings profile; keep the
+        # runtime score aligned with the precedence used by retrieval ranking.
+        return {
+            AuthorityTier.TIER_1: 1.0,
+            AuthorityTier.TIER_2: 0.9,
+            AuthorityTier.TIER_3: 0.95,
+            AuthorityTier.TIER_4: 0.7,
+            AuthorityTier.TIER_5: 0.5,
+            AuthorityTier.TIER_6: 0.2,
+        }.get(tier, 0.2)
     
     def verify_tier(self, tier: AuthorityTier, metadata: Any) -> bool:
         """Verify authority tier is valid for metadata."""

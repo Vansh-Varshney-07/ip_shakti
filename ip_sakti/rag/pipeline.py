@@ -86,14 +86,17 @@ class IntentClassifier(QueryAnalyzer):
             r'\bdrug\b', r'\bmedicine\b', r'\bformulation\b', r'\bayurved', r'\bherbal\b',
             r'\bplant(?:s)?\b', r'\bchemical(?:s)?\b', r'\bphytopharmaceutical\b',
             r'\bnutraceutical\b', r'\bcosmetic\b', r'\bmanufactur', r'\bregister(?:ed|ation)?\b',
+            r'आयुर्वेदिक', r'औषधि', r'दवा',
         ],
         QueryIntent.PROCEDURE_QUERY: [
             r'\bhow\s+(?:do|can|should)\b', r'\bprocedure\b', r'\bprocess\b', r'\bsteps?\b',
-            r'\bwhere\s+should\s+i\b', r'\bwhich\s+office\b', r'\bhow\s+to\s+register\b',
+            r'\bwhere\s+should\b', r'\bwhich\s+office\b', r'\bhow\s+to\s+register\b',
+            r'\bregistration pathway\b', r'\bnext steps?\b', r'कदम', r'शुरुआती', r'कैसे',
         ],
         QueryIntent.COMPLIANCE_CHECK: [
             r'\bcompli(?:ant|ance)\b', r'\ballowed\b', r'\blegal(?:ly)?\b', r'\bunder\s+which\s+act\b',
             r'\bwhat\s+rules?\b', r'\bapproval\b', r'\blicen[cs]e\b', r'\bclearance\b',
+            r'\badvertis(?:e|ing)\b', r'\blabell?ing\b', r'\brestriction\b', r'\bregulat(?:e|ory|ion)\b',
         ],
         QueryIntent.PATENT_SEARCH: [
             r'\bpatent\b', r'\binvention\b', r'\bclaim\b', r'\bprior art\b',
@@ -112,7 +115,9 @@ class IntentClassifier(QueryAnalyzer):
         ],
         QueryIntent.LEGAL_RESEARCH: [
             r'\bcase law\b', r'\bprecedent\b', r'\bjudgment\b', r'\bruling\b',
-            r'\bstatute\b', r'\bregulation\b', r'\blegal opinion\b'
+            r'\bstatute\b', r'\bregulation\b', r'\blegal opinion\b', r'\bcourt decision\b',
+            r'\babs\b', r'\bbenefit[- ]sharing\b', r'\bbiodiversity\b', r'\bnagoya\b',
+            r'\btraditional knowledge\b', r'\btkdl\b', r'\bgeographical identity\b', r'\bgi\b',
         ],
         QueryIntent.FREEDOM_TO_OPERATE: [
             r'\bfreedom to operate\b', r'\bfto\b', r'\brisk\b', r'\bclearance\b'
@@ -135,8 +140,29 @@ class IntentClassifier(QueryAnalyzer):
             if score > 0:
                 intent_scores[intent] = score
         
-        # Determine primary intent
-        primary_intent = max(intent_scores, key=intent_scores.get) if intent_scores else QueryIntent.GENERAL_LEGAL
+        # Prefer explicit legal action over broad product vocabulary. A query
+        # mentioning a plant and a patent is a patent search, while a query
+        # asking how to register a herbal product is a procedure query.
+        intent_priority = {
+            QueryIntent.PATENT_SEARCH: 5,
+            QueryIntent.TRADEMARK_SEARCH: 5,
+            QueryIntent.COPYRIGHT_SEARCH: 5,
+            QueryIntent.DESIGN_SEARCH: 5,
+            QueryIntent.FREEDOM_TO_OPERATE: 5,
+            QueryIntent.VALIDITY_CHALLENGE: 5,
+            QueryIntent.LICENSING: 5,
+            QueryIntent.PROCEDURE_QUERY: 4,
+            QueryIntent.COMPLIANCE_CHECK: 4,
+            QueryIntent.LEGAL_RESEARCH: 5,
+            QueryIntent.FORMULATION_CLASSIFY: 1,
+        }
+        primary_intent = (
+            max(intent_scores, key=lambda intent: (
+                intent_scores[intent] + (intent_priority.get(intent, 0) if intent_priority.get(intent, 0) >= 4 else 0.5),
+                intent_scores[intent],
+            ))
+            if intent_scores else QueryIntent.GENERAL_LEGAL
+        )
         
         # Extract entities (simplified - would use NER in production)
         entities = self._extract_entities(query)
@@ -591,7 +617,7 @@ class LLMGenerator(Generator):
         citations: List[Dict[str, Any]],
         rag_context: RAGContext,
     ) -> Tuple[str, float]:
-        prompt = self._build_prompt(query, context, citations)
+        prompt = self._build_prompt(query, context, citations, rag_context)
         if self.settings.test_mode:
             return self._extractive_test_answer(context, citations)
         if not self.api_key:
@@ -640,6 +666,7 @@ class LLMGenerator(Generator):
         query: str,
         context: str,
         citations: List[Dict[str, Any]],
+        rag_context: RAGContext,
     ) -> str:
         """Build prompt for LLM."""
         citation_list = "\n".join([
@@ -655,7 +682,7 @@ Answering requirements:
 - For an Ayurvedic, herbal, chemical, food, cosmetic, or drug product, distinguish classical medicine, proprietary/patent medicine, new/non-classical drug, phytopharmaceutical, Ayurveda-Aahar/nutraceutical, and cosmetic possibilities when relevant.
 - Explain the likely applicable Indian regimes and competent next step separately from any international/export regime.
 - Provide a practical numbered workflow, likely records/forms/evidence, IP options, ABS/TK implications, and risks or exclusions when the evidence supports them.
-- Respond in the requested language ({context.query.language.value}); preserve statute, treaty, registry, and citation names in their authoritative form.
+- Respond in the requested language ({rag_context.query.language.value}); preserve statute, treaty, registry, and citation names in their authoritative form.
 - Cite material claims with [1], [2], etc. Do not cite a source that does not support the claim.
 - State that this is information and not legal, medical, or regulatory advice.
 

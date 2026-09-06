@@ -207,8 +207,11 @@ table.files-table tr:hover td{background:var(--panel-2);}
 .graph-viewport.is-panning{cursor:grabbing;}
 .node-canvas{position:absolute;left:0;top:0;width:1120px;height:570px;transform-origin:0 0;}
 svg.connectors{position:absolute;top:0;left:0;width:1120px;height:570px;pointer-events:none;overflow:visible;}
-.connector-path{fill:none;stroke:var(--border-strong);stroke-width:1.2;stroke-dasharray:4 7;opacity:.9;animation:flowDash 3s linear infinite;}
+.connector-path{fill:none;stroke:rgba(110,99,80,.42);stroke-width:1.5;stroke-dasharray:5 7;opacity:.95;animation:flowDash 3s linear infinite;}
+.connector-path.secondary{stroke:rgba(169,190,147,.72);stroke-width:1.15;opacity:.85;}
+.connector-pulse{fill:var(--gold);opacity:.9;animation:connectorPulse 2.4s ease-in-out infinite;}
 @keyframes flowDash{to{stroke-dashoffset:-22;}}
+@keyframes connectorPulse{0%,100%{opacity:.25;transform:scale(.75);}50%{opacity:1;transform:scale(1.1);}}
 .pnode{position:absolute;width:132px;transform:translateX(-50%);text-align:center;cursor:pointer;}
 .pnode{z-index:1;}
 .pnode .ring{

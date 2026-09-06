@@ -127,6 +127,12 @@ const pipelineNodes = [
   ["Reason", ["hybrid_fusion", "cross_reranking", "citation_generation", "verification"]],
   ["Serve", ["chat_serving", "dashboard_metrics", "audit_log", "api_responses"]],
 ];
+const pipelineEdges = [
+  [[0, 0], [1, 0]], [[0, 1], [1, 1]], [[0, 2], [1, 2]], [[0, 3], [1, 3]], [[0, 4], [1, 4]], [[0, 5], [1, 5]],
+  [[1, 0], [2, 0]], [[1, 1], [2, 1]], [[1, 2], [2, 2]], [[1, 3], [2, 3]], [[1, 4], [2, 4]], [[1, 5], [2, 0]],
+  [[2, 0], [3, 0]], [[2, 1], [3, 0]], [[2, 2], [3, 1]], [[2, 3], [3, 2]], [[2, 4], [3, 3]],
+  [[3, 0], [4, 0]], [[3, 0], [4, 1]], [[3, 1], [4, 1]], [[3, 2], [4, 3]], [[3, 3], [4, 2]],
+];
 const graphState = { scale: .55, x: 0, y: 0, dragging: false, startX: 0, startY: 0, originX: 0, originY: 0 };
 function applyGraphTransform() {
   const canvas = $("nodeCanvas");
@@ -184,18 +190,21 @@ function renderPipeline(health) {
   }));
   svg.innerHTML = "";
   svg.setAttribute("width", "1120"); svg.setAttribute("height", "570");
-  for (let columnIndex = 0; columnIndex < pipelineNodes.length - 1; columnIndex += 1) {
-    const left = nodePositions.filter(node => node.columnIndex === columnIndex);
-    const right = nodePositions.filter(node => node.columnIndex === columnIndex + 1);
-    left.forEach((from, index) => {
-      const targets = [right[Math.min(index, right.length - 1)], right[Math.min(index + 1, right.length - 1)]];
-      targets.filter((target, targetIndex, all) => target && all.indexOf(target) === targetIndex).forEach(to => {
-        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-        path.setAttribute("d", `M ${from.x} ${from.y} C ${from.x + 92} ${from.y}, ${to.x - 92} ${to.y}, ${to.x} ${to.y}`);
-        path.setAttribute("class", "connector-path"); svg.appendChild(path);
-      });
-    });
-  }
+  const nodeAt = (columnIndex, rowIndex) => nodePositions.find(node => node.columnIndex === columnIndex && node.rowIndex === rowIndex);
+  pipelineEdges.forEach(([fromRef, toRef], edgeIndex) => {
+    const from = nodeAt(fromRef[0], fromRef[1]);
+    const to = nodeAt(toRef[0], toRef[1]);
+    if (!from || !to) return;
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", `M ${from.x} ${from.y} C ${from.x + 92} ${from.y}, ${to.x - 92} ${to.y}, ${to.x} ${to.y}`);
+    path.setAttribute("class", `connector-path${edgeIndex % 4 === 1 ? " secondary" : ""}`);
+    svg.appendChild(path);
+    const pulse = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    pulse.setAttribute("cx", `${from.x + (to.x - from.x) * .52}`);
+    pulse.setAttribute("cy", `${from.y + (to.y - from.y) * .52}`);
+    pulse.setAttribute("r", "2.5"); pulse.setAttribute("class", "connector-pulse");
+    pulse.style.animationDelay = `${(edgeIndex % 7) * 0.18}s`; svg.appendChild(pulse);
+  });
   applyGraphTransform();
   $("logBody").innerHTML = `<div class="log-line"><span class="l-ts">${new Date().toLocaleTimeString("en-GB")}</span><span class="l-node">api</span><span class="l-msg ok">live health snapshot received · ${healthy}/${health.components?.length || 0} backend components healthy</span></div><div class="log-line"><span class="l-ts">${new Date().toLocaleTimeString("en-GB")}</span><span class="l-node">retrieval</span><span class="l-msg ok">${Number(telemetry.completed || 0)} completed queries · ${Number(telemetry.cited || 0)} cited</span></div>`;
   canvas.querySelector(".pnode")?.click();
