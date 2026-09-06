@@ -1,0 +1,22 @@
+[
+  {"id":"formulation-01","category":"formulation","prompt":"I developed an Ayurvedic drink using ashwagandha, tulsi and a new extraction process. Is it a drug, nutraceutical, food or cosmetic, and where should I start?"},
+  {"id":"formulation-02","category":"formulation","prompt":"My herbal capsule uses a novel solvent and a plant collected from India. What classification, evidence, IP and biodiversity permissions should I investigate?"},
+  {"id":"formulation-03","category":"formulation","prompt":"A cream contains a botanical extract and a synthetic active. Which Indian authority and product regime may apply, and what facts are still missing?"},
+  {"id":"formulation-04","category":"formulation","prompt":"We want to sell a classical Ayurvedic formulation with a modern dosage form. What changes if the formula comes from a First Schedule text?"},
+  {"id":"patent-01","category":"patent","prompt":"Can a new extraction process for a known medicinal plant be patented in India? Explain novelty, inventive step and Section 3(p) risks."},
+  {"id":"patent-02","category":"patent","prompt":"What should I disclose before filing a patent for a formulation developed with a university and an indigenous community?"},
+  {"id":"trademark-01","category":"trademark","prompt":"Can I register the brand name HERBASHAKTI for an Ayurvedic product, and what should I search first?"},
+  {"id":"gi-01","category":"gi","prompt":"Our growers produce a region-specific medicinal herb. Could a geographical indication protect it, and who can apply?"},
+  {"id":"abs-01","category":"abs","prompt":"We sourced a plant from India for a commercial formulation. When do Biological Diversity Act and benefit-sharing obligations arise?"},
+  {"id":"tk-01","category":"traditional-knowledge","prompt":"How can I check whether a claimed herbal remedy is already documented in TKDL or other prior art?"},
+  {"id":"procedure-01","category":"procedure","prompt":"Give me a practical order of operations for taking an AYUSH formulation from lab sample to lawful sale in India."},
+  {"id":"procedure-02","category":"procedure","prompt":"Which records, testing evidence and registrations should an AYUSH startup prepare before approaching the relevant authority?"},
+  {"id":"compliance-01","category":"compliance","prompt":"Is it permissible to advertise that an herbal product cures diabetes? Identify the regulatory and advertising risks."},
+  {"id":"compliance-02","category":"compliance","prompt":"What label claims and packaging information should we review for an Ayurveda-Aahar product?"},
+  {"id":"international-01","category":"international","prompt":"We plan to export a botanical product to Europe. Which Indian obligations remain and which foreign requirements need separate research?"},
+  {"id":"international-02","category":"international","prompt":"How do PCT, Madrid and Hague systems differ, and which one is relevant to a product brand versus an invention?"},
+  {"id":"cross-regime-01","category":"cross-regime","prompt":"Compare patent, trade secret, trademark and copyright protection for an Ayurvedic product and its manufacturing know-how."},
+  {"id":"case-law-01","category":"case-law","prompt":"Find the kinds of Indian case law or official decisions I should review for traditional-knowledge patent objections."},
+  {"id":"multilingual-01","category":"multilingual","prompt":"भारत में आयुर्वेदिक औषधि को पंजीकृत करने के लिए प्रारंभिक कदम क्या हैं? स्रोतों के साथ समझाइए।"},
+  {"id":"uncertain-01","category":"clarification","prompt":"I have a product called XYZ made with a plant and chemical, but I have not decided whether it is a medicine, food or cosmetic. What minimum questions must be answered first?"}
+]

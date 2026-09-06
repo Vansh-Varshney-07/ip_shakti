@@ -5,7 +5,8 @@ Core package for IP Sakti RAG system.
 from ip_sakti.core.models import *
 from ip_sakti.core.interfaces import *
 from ip_sakti.core.di import *
-from ip_sakti.core.services import *
+# Services import adapters, and adapters import the canonical RAG pipeline.
+# Keep services opt-in to avoid an import cycle during API startup.
 
 __all__ = [
     # Models

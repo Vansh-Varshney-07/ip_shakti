@@ -5,16 +5,19 @@ Phase 18: API Architecture - Complete FastAPI app with all endpoints.
 
 from __future__ import annotations
 import logging
+import os
 import time
+from pathlib import Path
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from ip_sakti.config.loader import Settings, get_settings
@@ -34,6 +37,7 @@ from ip_sakti.api.models import (
     HealthComponent,
     HealthResponse,
     IngestionRequest,
+    IngestionSourceConfig,
     IngestionResponse,
     IngestionStatusResponse,
     MetricsResponse,
@@ -51,8 +55,13 @@ from ip_sakti.api.models import (
     GeneratedSegment,
     Citation,
     SourceReference,
+    AuthorityTier,
+    JurisdictionCode,
+    LanguageCode,
+    DocumentType,
     TextSpan,
     RetrievedChunk,
+    DocumentChunkDetail,
     Claim,
 )
 from ip_sakti.api.auth import (
@@ -74,6 +83,7 @@ from ip_sakti.api.auth import (
 from ip_sakti.rag.pipeline import RAGPipeline, StreamingRAGPipeline, create_rag_pipeline
 from ip_sakti.retrieval.retrieval_engine import RetrievalEngine, create_retrieval_engine, SearchRequest, RetrievalStrategy
 from ip_sakti.ingestion.pipeline import IngestionPipeline, IngestionJob, IngestionStatus, create_ingestion_pipeline
+from ip_sakti.ingestion.corpus_validation import validate_corpus
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -91,6 +101,60 @@ _ingestion_pipeline: Optional[IngestionPipeline] = None
 _jwt_manager: Optional[JWTManager] = None
 _api_key_manager: Optional[APIKeyManager] = None
 _rate_limiter: Optional[RateLimiter] = None
+_ingestion_jobs: Dict[str, Dict[str, Any]] = {}
+
+
+def _api_authority_tier(value: Any) -> AuthorityTier:
+    """Convert internal tier values without dropping provenance."""
+    raw = getattr(value, "value", value) or "TIER_6"
+    raw = str(raw).upper()
+    if raw.isdigit():
+        raw = f"TIER_{raw}"
+    try:
+        return AuthorityTier(raw)
+    except ValueError:
+        return AuthorityTier.TIER_6
+
+
+def _citation_model(citation: Dict[str, Any]) -> Citation:
+    source_url = citation.get("source_url") or citation.get("canonical_url") or ""
+    source_name = citation.get("source_name") or citation.get("document_type") or "Indexed legal source"
+    return Citation(
+        legal_citation=citation.get("section") or f"Document {citation.get('document_id', 'unknown')}",
+        source_reference=SourceReference(
+            source_id=str(citation.get("document_id") or citation.get("chunk_id")),
+            source_name=str(source_name),
+            canonical_url=str(source_url),
+            authority_tier=_api_authority_tier(citation.get("source_tier")),
+            retrieved_at=datetime.utcnow(),
+            content_hash=str(citation.get("content_hash") or ""),
+        ),
+        chunk_id=str(citation.get("chunk_id")),
+    )
+
+
+def _retrieved_chunk_model(result: Any, rank: int) -> RetrievedChunk:
+    chunk = result.chunk
+    metadata = chunk.metadata or {}
+    return RetrievedChunk(
+        chunk_id=str(chunk.id),
+        document_id=str(chunk.document_id),
+        text=chunk.content,
+        hierarchy={"section": metadata.get("section_title") or metadata.get("statute_section")},
+        retrieval_score=float(result.score),
+        authority_score=float(chunk.authority_score or metadata.get("authority_score") or 0.0),
+        combined_score=float(getattr(result, "reranked_score", None) or result.score),
+        rank=rank,
+        matched_terms=[],
+        source_provenance={
+            "source_url": metadata.get("source_url"),
+            "source_path": metadata.get("source_path"),
+            "authority_tier": metadata.get("source_authority_tier"),
+            "jurisdiction": getattr(chunk.jurisdiction, "value", chunk.jurisdiction),
+            "document_type": getattr(chunk.document_type, "value", chunk.document_type),
+            "content_hash": metadata.get("content_hash"),
+        },
+    )
 
 
 # ============================================================
@@ -120,10 +184,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     _retrieval_engine = create_retrieval_engine()
     await _retrieval_engine.initialize()
 
-    _rag_pipeline = create_rag_pipeline(streaming=False)
-    _streaming_rag_pipeline = create_rag_pipeline(streaming=True)
+    # Reuse the initialized persistent engine so the RAG pipeline searches the
+    # production SQLite index instead of creating an empty second engine.
+    _rag_pipeline = create_rag_pipeline(
+        streaming=False,
+        retrieval_engine=_retrieval_engine,
+    )
+    _streaming_rag_pipeline = create_rag_pipeline(
+        streaming=True,
+        retrieval_engine=_retrieval_engine,
+    )
 
-    _ingestion_pipeline = create_ingestion_pipeline()
+    _ingestion_pipeline = create_ingestion_pipeline(retrieval_engine=_retrieval_engine)
 
     logger.info("API components initialized successfully")
 
@@ -171,13 +243,18 @@ app = FastAPI(
 # Middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure for production
+    allow_origins=get_settings().api_cors_origins or ["http://localhost:8000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.middleware("http")(rate_limit_middleware)
+
+# Serve the checked-in web client from the same origin as the API.
+_web_dir = Path(__file__).resolve().parents[1] / "web"
+if _web_dir.exists():
+    app.mount("/web", StaticFiles(directory=str(_web_dir), html=True), name="web")
 
 
 # ============================================================
@@ -422,7 +499,9 @@ async def query(
             ),
         )
 
-    # Build response (simplified - would map from context)
+    citation_models = [_citation_model(citation) for citation in context.citations]
+    retrieved_results = context.reranked_results or context.retrieval_results
+    retrieved_models = [_retrieved_chunk_model(result, index) for index, result in enumerate(retrieved_results, 1)]
     return QueryResponse(
         success=True,
         data=QueryResponseModel(
@@ -434,17 +513,17 @@ async def query(
                     GeneratedSegment(
                         text=context.generated_answer or "No answer generated",
                         claims=[],
-                        citations=[],
+                        citations=citation_models,
                     )
                 ],
-                citations=[],  # Would map from context.citations
+                citations=citation_models,
                 overall_confidence=context.confidence_score,
                 jurisdiction=request.jurisdiction or JurisdictionCode.INDIA,
                 language=request.language,
                 processing_time_ms=int(context.metrics.get("total_time_ms", 0)),
                 retrieval_stats=context.metrics,
             ),
-            retrieved_chunks=[],  # Would map from context.retrieval_results
+            retrieved_chunks=retrieved_models,
             intent=context.query.intent or QueryIntent.GENERAL_LEGAL,
             jurisdiction=request.jurisdiction or JurisdictionCode.INDIA,
             warnings=context.errors,
@@ -584,38 +663,34 @@ async def search_documents(
     if request.authority_tier:
         filters["authority_tier"] = request.authority_tier.value
 
-    # Execute search (simplified - would use proper search)
-    search_req = SearchRequest(
-        query=request.query or "",
-        strategy=RetrievalStrategy.HYBRID,
-        filters=filters,
-        top_k=request.limit,
-    )
-
-    response = await retrieval_engine.search(search_req)
+    if request.query:
+        search_req = SearchRequest(query=request.query, strategy=RetrievalStrategy.HYBRID, filters=filters, top_k=request.limit)
+        candidate_chunks = [result.chunk for result in (await retrieval_engine.search(search_req)).results]
+    else:
+        candidate_chunks = list(getattr(retrieval_engine.vector_store, "chunks", {}).values())
 
     # Convert to document summaries (would need document-level aggregation)
     results = []
     seen_docs = set()
 
-    for result in response.results:
-        doc_id = result.chunk.document_id
+    for chunk in candidate_chunks:
+        doc_id = chunk.document_id
         if doc_id in seen_docs:
             continue
         seen_docs.add(doc_id)
 
         results.append(DocumentSummary(
             document_id=doc_id,
-            title=result.chunk.metadata.get("title", "Unknown"),
-            document_type=DocumentType(result.chunk.metadata.get("document_type", "act")),
-            jurisdiction=JurisdictionCode(result.chunk.metadata.get("jurisdiction", "INDIA")),
-            authority_tier=AuthorityTier(result.chunk.metadata.get("source_authority_tier", "TIER_1")),
-            language=LanguageCode(result.chunk.metadata.get("language", "en")),
-            version=result.chunk.metadata.get("version", "1.0"),
+            title=chunk.metadata.get("title") or chunk.metadata.get("source_name", "Unknown"),
+            document_type=DocumentType(chunk.metadata.get("document_type", "act")),
+            jurisdiction=JurisdictionCode(chunk.metadata.get("jurisdiction", "INDIA")),
+            authority_tier=_api_authority_tier(chunk.metadata.get("source_authority_tier")),
+            language=LanguageCode(chunk.metadata.get("language", "en")),
+            version=chunk.metadata.get("version", "1.0"),
             effective_date=None,
-            source_url=result.chunk.metadata.get("canonical_url", ""),
-            snippet=result.chunk.content[:200] + "..." if len(result.chunk.content) > 200 else result.chunk.content,
-            chunk_count=1,  # Would aggregate
+            source_url=chunk.metadata.get("canonical_url") or chunk.metadata.get("source_url") or "",
+            snippet=chunk.content[:200] + "..." if len(chunk.content) > 200 else chunk.content,
+            chunk_count=sum(1 for candidate in candidate_chunks if candidate.document_id == doc_id),
         ))
 
     return DocumentSearchResponse(
@@ -637,11 +712,30 @@ async def get_document(
     """
     Get full document details including all chunks.
     """
-    # In production, would query document store
-    # For now, return not implemented
-    raise HTTPException(
-        status_code=501,
-        detail="Document detail endpoint not yet implemented - requires document store integration",
+    chunks = [chunk for chunk in getattr(retrieval_engine.vector_store, "chunks", {}).values() if chunk.document_id == document_id]
+    if not chunks:
+        raise HTTPException(status_code=404, detail="Document not found")
+    first = chunks[0]
+    metadata = first.metadata or {}
+    details = [DocumentChunkDetail(
+        chunk_id=chunk.id,
+        hierarchy={"section": (chunk.metadata or {}).get("section_title")},
+        text=chunk.content,
+        chunk_type=(chunk.metadata or {}).get("chunk_type", "legal_text"),
+        token_count=len(chunk.content.split()),
+        citations=[],
+    ) for chunk in chunks]
+    return DocumentDetailResponse(
+        document_id=document_id,
+        title=metadata.get("title") or metadata.get("source_name", "Unknown"),
+        document_type=DocumentType(metadata.get("document_type", "act")),
+        jurisdiction=JurisdictionCode(metadata.get("jurisdiction", "INDIA")),
+        authority_tier=_api_authority_tier(metadata.get("source_authority_tier")),
+        language=LanguageCode(metadata.get("language", "en")),
+        version=metadata.get("version", "1.0"),
+        source_provenance={key: metadata.get(key) for key in ("source_url", "source_path", "content_hash", "source_authority_tier")},
+        chunks=details,
+        metadata=metadata,
     )
 
 
@@ -678,6 +772,15 @@ async def start_ingestion(
     # Queue ingestion (async)
     # In production, would use message queue
     estimated_chunks = len(request.sources) * 100  # Rough estimate
+    _ingestion_jobs[job_id] = {
+        "status": IngestionStatus.PENDING,
+        "sources_total": len(request.sources),
+        "sources_processed": 0,
+        "chunks_created": 0,
+        "errors": [],
+        "started_at": None,
+        "completed_at": None,
+    }
 
     # Start background task
     import asyncio
@@ -691,9 +794,109 @@ async def start_ingestion(
     )
 
 
+@app.post("/ingest/upload", response_model=IngestionResponse, tags=["Ingestion"])
+async def upload_ingestion(
+    file: UploadFile = File(...),
+    user: CurrentUser = Depends(require_scopes("ingest:write")),
+    ingestion_pipeline: IngestionPipeline = Depends(get_ingestion_pipeline),
+    _rate_limit: None = Depends(rate_limit_dependency),
+):
+    """Accept a browser upload and send it through the same ingestion pipeline."""
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Uploaded file must have a filename")
+    content = await file.read()
+    settings = get_settings()
+    if len(content) > settings.max_document_size_mb * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Uploaded document is too large")
+    upload_dir = Path(__file__).resolve().parents[2] / "data" / "runtime" / "uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = Path(file.filename).name
+    upload_path = upload_dir / safe_name
+    upload_path.write_bytes(content)
+    request = IngestionRequest(sources=[IngestionSourceConfig(
+        source_id=safe_name,
+        source_type=DocumentType.ACT,
+        file_path=str(upload_path),
+        jurisdiction=JurisdictionCode.INDIA,
+        authority_tier=AuthorityTier.TIER_1,
+    )])
+    return await start_ingestion(request, user, ingestion_pipeline, _rate_limit)
+
+
+@app.post("/query/upload", response_model=QueryResponse, tags=["Query"])
+async def query_with_upload(
+    file: UploadFile = File(...),
+    query_text: str = Form(..., min_length=1, max_length=10000),
+    user: CurrentUser = Depends(get_current_user),
+    rag_pipeline: RAGPipeline = Depends(get_rag_pipeline),
+    _rate_limit: None = Depends(rate_limit_dependency),
+):
+    """Answer using a PDF as ephemeral prompt context without indexing it."""
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Uploaded document must have a filename")
+    content = await file.read()
+    settings = get_settings()
+    if len(content) > settings.max_document_size_mb * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Uploaded document is too large")
+
+    upload_dir = Path(__file__).resolve().parents[2] / "data" / "runtime" / "prompt_uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    upload_path = upload_dir / Path(file.filename).name
+    upload_path.write_bytes(content)
+    try:
+        from ip_sakti.ingestion.loaders import load_document
+        loaded = await load_document(str(upload_path))
+        attachment_text = "\n\n".join(doc.content for doc in loaded if doc.content).strip()
+    finally:
+        upload_path.unlink(missing_ok=True)
+    if not attachment_text:
+        raise HTTPException(status_code=422, detail="No readable text was found in the uploaded document")
+
+    from ip_sakti.core.models import Query, QueryIntent
+    internal_query = Query(
+        text=query_text,
+        user_id=user.user_id,
+        jurisdiction=JurisdictionCode.INDIA,
+        language=LanguageCode.EN,
+        max_results=10,
+        require_citations=True,
+    )
+    context = await rag_pipeline.run(
+        internal_query,
+        attachment_text=attachment_text,
+        attachment_name=file.filename,
+    )
+    citation_models = [_citation_model(citation) for citation in context.citations]
+    retrieved_results = context.reranked_results or context.retrieval_results
+    retrieved_models = [_retrieved_chunk_model(result, index) for index, result in enumerate(retrieved_results, 1)]
+    return QueryResponse(
+        success=not bool(context.errors),
+        data=QueryResponseModel(
+            query_id=context.query.query_id,
+            answer=GeneratedAnswer(
+                answer_id=str(context.query.query_id),
+                query=query_text,
+                segments=[GeneratedSegment(text=context.generated_answer or "No answer generated", claims=[], citations=citation_models)],
+                citations=citation_models,
+                overall_confidence=context.confidence_score,
+                jurisdiction=JurisdictionCode.INDIA,
+                language=LanguageCode.EN,
+                processing_time_ms=int(context.metrics.get("total_time_ms", 0)),
+                retrieval_stats=context.metrics,
+            ),
+            retrieved_chunks=retrieved_models,
+            intent=context.query.intent or QueryIntent.GENERAL_LEGAL,
+            jurisdiction=JurisdictionCode.INDIA,
+            warnings=context.errors,
+        ),
+    )
+
+
 async def _run_ingestion(job_id: str, request: IngestionRequest, pipeline: IngestionPipeline):
     """Background ingestion task."""
-    # Would update job status in Redis/database
+    record = _ingestion_jobs[job_id]
+    record["status"] = IngestionStatus.PROCESSING
+    record["started_at"] = datetime.utcnow()
     try:
         # Convert request to pipeline format - create IngestionJob objects
         jobs = []
@@ -713,9 +916,18 @@ async def _run_ingestion(job_id: str, request: IngestionRequest, pipeline: Inges
         
         # Run ingestion for each source
         for job in jobs:
-            await pipeline.ingest(job)
+            result = await pipeline.ingest(job)
+            record["sources_processed"] += 1
+            record["chunks_created"] += len(result.chunks)
+            if result.error_message:
+                record["errors"].append(result.error_message)
+        record["status"] = IngestionStatus.FAILED if record["errors"] else IngestionStatus.COMPLETED
     except Exception as e:
         logger.exception(f"Ingestion job {job_id} failed: {e}")
+        record["status"] = IngestionStatus.FAILED
+        record["errors"].append(str(e))
+    finally:
+        record["completed_at"] = datetime.utcnow()
 
 
 @app.get("/ingest/{job_id}/status", response_model=IngestionStatusResponse, tags=["Ingestion"])
@@ -727,14 +939,20 @@ async def get_ingestion_status(
     """
     Get ingestion job status.
     """
-    # In production, would query job status from Redis/database
+    record = _ingestion_jobs.get(job_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Ingestion job not found")
+    total = record["sources_total"] or 1
     return IngestionStatusResponse(
         job_id=job_id,
-        status=IngestionStatus.PENDING,
-        progress=0.0,
-        sources_processed=0,
-        sources_total=0,
-        chunks_created=0,
+        status=record["status"],
+        progress=record["sources_processed"] / total,
+        sources_processed=record["sources_processed"],
+        sources_total=record["sources_total"],
+        chunks_created=record["chunks_created"],
+        errors=record["errors"],
+        started_at=record["started_at"],
+        completed_at=record["completed_at"],
     )
 
 
@@ -811,6 +1029,15 @@ async def health_check(
             details={"error": str(e)},
         ))
 
+    settings = get_settings()
+    credential_name = "NVIDIA_API_KEY" if settings.llm_provider.lower() == "nvidia" else "OPENAI_API_KEY"
+    generation_ready = bool(os.getenv(credential_name)) or settings.test_mode
+    components.append(HealthComponent(
+        name="generation",
+        status="healthy" if generation_ready else "degraded",
+        details={"provider": settings.llm_provider, "base_url": settings.llm_base_url, "test_mode": settings.test_mode, "model": settings.llm_primary, "credential_name": credential_name, "credential_configured": bool(os.getenv(credential_name))},
+    ))
+
     # Determine overall status
     statuses = [c.status for c in components]
     if all(s == "healthy" for s in statuses):
@@ -824,6 +1051,16 @@ async def health_check(
         status=overall,
         components=components,
     )
+
+
+@app.get("/corpus/validation", tags=["Admin"])
+async def corpus_validation(
+    user: CurrentUser = Depends(require_scopes("admin:read")),
+    _rate_limit: None = Depends(rate_limit_dependency),
+):
+    """Validate corpus files before authoritative ingestion."""
+    root = get_settings().corpus_root or str(Path(__file__).resolve().parents[2] / "data" / "corpus")
+    return validate_corpus(root)
 
 
 @app.get("/metrics", response_model=MetricsResponse, tags=["Admin"])
@@ -843,6 +1080,28 @@ async def get_metrics(
             "timestamp": datetime.utcnow().isoformat(),
         }
     )
+
+
+@app.get("/dashboard/metrics", response_model=MetricsResponse, tags=["Dashboard"])
+async def get_dashboard_metrics(
+    retrieval_engine: RetrievalEngine = Depends(get_retrieval_engine),
+):
+    """Return non-sensitive aggregates required by the public dashboard."""
+    stats = await retrieval_engine.get_stats()
+    chunks = list(getattr(retrieval_engine.vector_store, "chunks", {}).values())
+    documents = {chunk.document_id for chunk in chunks}
+    tiers = {}
+    for chunk in chunks:
+        tier = chunk.metadata.get("source_authority_tier", "TIER_6")
+        tiers[tier] = tiers.get(tier, 0) + 1
+    return MetricsResponse(metrics={
+        "sources_indexed": len(documents),
+        "chunks_indexed": len(chunks),
+        "authority_tiers": tiers,
+        "retrieval_engine": stats,
+        "query_telemetry": stats.get("query_telemetry", {}),
+        "test_mode": get_settings().test_mode,
+    })
 
 
 @app.get("/config", response_model=ConfigResponse, tags=["Admin"])

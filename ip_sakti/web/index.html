@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-<link rel="stylesheet" href="/static/css/main.css">
+<link rel="stylesheet" href="/web/static/css/main.css">
 </head>
 <body>
 <div id="app">
@@ -21,10 +21,10 @@
       </div>
     </div>
     <nav class="navlist">
-      <div class="navitem active" data-view="chat"><span class="ic">&#9998;</span> Chat</div>
-      <div class="navitem" data-view="dashboard"><span class="ic">&#9635;</span> Dashboard</div>
-      <div class="navitem" data-view="pipeline"><span class="ic">&#8635;</span> Pipeline</div>
-      <div class="navitem" data-view="files"><span class="ic">&#128193;</span> Files</div>
+      <div class="navitem active" data-view="chat"><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4.5-1 9.8-9.8a2.1 2.1 0 0 0-3-3L5.5 16 4 20Z"/><path d="m13.8 7.2 3 3"/></svg></span> Chat</div>
+      <div class="navitem" data-view="dashboard"><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg></span> Dashboard</div>
+      <div class="navitem" data-view="pipeline"><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M5 12h9M5 17h14"/><path d="m16 9 3 3-3 3"/></svg></span> Pipeline</div>
+      <div class="navitem" data-view="files"><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5A1.5 1.5 0 0 1 5.5 6H10l2 2h6.5A1.5 1.5 0 0 1 20 9.5v8A1.5 1.5 0 0 1 18.5 19h-13A1.5 1.5 0 0 1 4 17.5v-10Z"/></svg></span> Files</div>
     </nav>
     <div class="sidebar-foot">
       <div class="lbl">Corpus</div>
@@ -67,9 +67,10 @@
         <div class="chat-input-wrap">
           <div class="chat-input-shell">
             <input type="file" id="fileInput" />
-            <button class="icon-btn" id="attachBtn" title="Attach a document">&#128206;</button>
+            <select id="fileMode" title="Choose how to use the attached document"><option value="index">Add to knowledge base</option><option value="prompt">Use as prompt context</option></select>
+            <button class="icon-btn" id="attachBtn" title="Attach a document"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8.5 12.5 6.8-6.8a3.2 3.2 0 0 1 4.5 4.5l-8.5 8.5a5 5 0 0 1-7.1-7.1l8-8"/></svg></button>
             <input type="text" id="chatInput" placeholder="Ask Sahayak about IP, Ayurveda, TK or biodiversity law..." />
-            <button class="send-btn" id="sendBtn">&#10148;</button>
+            <button class="send-btn" id="sendBtn"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 4 16 8-16 8 3-8-3-8Z"/><path d="M7 12h13"/></svg></button>
           </div>
         </div>
       </div>
@@ -79,10 +80,10 @@
     <section class="view" id="view-dashboard">
       <div class="view-scroll">
         <div class="kpi-strip">
-          <div class="kpi" style="--accent:var(--gold)"><div class="num">24</div><div class="lbl">Sources indexed</div><div class="delta up">&#9650; 3 this week</div></div>
-          <div class="kpi" style="--accent:var(--teal)"><div class="num">0.91</div><div class="lbl">Citation precision</div><div class="delta up">&#9650; 0.02 vs last eval</div></div>
-          <div class="kpi" style="--accent:var(--rust)"><div class="num">6.4%</div><div class="lbl">Abstention rate</div><div class="delta down">&#9660; 1.1pt vs last eval</div></div>
-          <div class="kpi" style="--accent:var(--gold)"><div class="num">412</div><div class="lbl">Queries this week</div><div class="delta up">&#9650; 58 from last week</div></div>
+          <div class="kpi" style="--accent:var(--gold)"><div class="num" id="kpiSources">--</div><div class="lbl">Sources indexed</div><div class="delta" id="kpiSourcesDelta">Loading backend data</div></div>
+          <div class="kpi" style="--accent:var(--sage)"><div class="num" id="kpiPrecision">--</div><div class="lbl">Citation precision</div><div class="delta" id="kpiPrecisionDelta">Awaiting query telemetry</div></div>
+          <div class="kpi" style="--accent:var(--alert)"><div class="num" id="kpiAbstention">--</div><div class="lbl">Abstention rate</div><div class="delta" id="kpiAbstentionDelta">Awaiting query telemetry</div></div>
+          <div class="kpi" style="--accent:var(--gold)"><div class="num" id="kpiQueries">--</div><div class="lbl">Queries this week</div><div class="delta" id="kpiQueriesDelta">Loading backend data</div></div>
         </div>
         <div class="grid-2">
           <div class="panel"><h3>Retrieval latency by stage</h3><div class="panel-sub">Median milliseconds, last 7 days</div><div class="chart-wrap"><canvas id="chartLatency"></canvas></div></div>
@@ -102,12 +103,12 @@
       <div class="view-scroll">
         <div class="kpi-strip">
           <div class="kpi" style="--accent:var(--gold)"><div class="num" id="filesTotal">--</div><div class="lbl">Documents ingested</div></div>
-          <div class="kpi" style="--accent:var(--teal)"><div class="num" id="filesChunks">--</div><div class="lbl">Total chunks</div></div>
+          <div class="kpi" style="--accent:var(--sage)"><div class="num" id="filesChunks">--</div><div class="lbl">Total chunks</div></div>
           <div class="kpi" style="--accent:var(--gold)"><div class="num" id="filesTier1">--</div><div class="lbl">Tier 1 sources</div></div>
-          <div class="kpi" style="--accent:var(--teal)"><div class="num">Just now</div><div class="lbl">Last ingested</div></div>
+          <div class="kpi" style="--accent:var(--sage)"><div class="num" id="filesLastIngested">--</div><div class="lbl">Last ingested</div></div>
         </div>
         <div class="files-toolbar">
-          <div class="search-box">&#128269; <input type="text" id="fileSearch" placeholder="Search ingested files..." /></div>
+          <div class="search-box"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 4 4"/></svg><input type="text" id="fileSearch" placeholder="Search ingested files..." /></div>
         </div>
         <table class="files-table">
           <thead><tr><th>Name</th><th>Type</th><th>Tier</th><th>Jurisdiction</th><th>Chunks</th><th>Status</th><th>Ingested</th></tr></thead>
@@ -121,17 +122,8 @@
       <div class="pipeline-body">
         <div class="p-rail">
           <div class="rail-block">
-            <h4>SIMULATION</h4>
-            <div class="slider-row"><span class="s-val" id="rateVal">1.0x</span>Simulation speed<input type="range" min="0.2" max="3" step="0.1" value="1" id="rateSlider"></div>
-            <div class="slider-row"><span class="s-val" id="qpmVal">2.4/min</span>Query rate<input type="range" min="0.5" max="8" step="0.1" value="2.4" id="qpmSlider"></div>
-          </div>
-          <div class="rail-block">
-            <h4>RECOVERY (RETRY & BACKFILL)</h4>
-            <div class="rail-btns">
-              <div class="rail-btn warn" id="breakBtn">BREAK<br>NODE</div>
-              <div class="rail-btn" id="healBtn">HEAL<br>ALL</div>
-            </div>
-            <div class="rail-note">Failures retry with exponential backoff, then backfill from the last checkpoint.</div>
+            <h4>LIVE TELEMETRY</h4>
+            <div class="rail-note">Status, source counts, and indexed chunks are read from the backend health snapshot. Detailed per-node latency is not exposed by the current API.</div>
           </div>
           <div class="rail-block">
             <h4>HEALTH</h4>
@@ -173,6 +165,6 @@
   </main>
 </div>
 
-<script src="/static/js/app.js"></script>
+<script src="/web/static/js/app.js"></script>
 </body>
 </html>

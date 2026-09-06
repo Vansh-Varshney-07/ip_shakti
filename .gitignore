@@ -36,7 +36,10 @@ logs/
 
 # Data files (large)
 *.pdf
-data/
+data/*
+!data/quarantine/
+!data/quarantine/README.md
+!data/quarantine/manifest.json
 *.pkl
 *.pickle
 

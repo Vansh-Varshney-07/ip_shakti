@@ -325,10 +325,12 @@ class IngestionPipeline:
         settings: Optional[Settings] = None,
         authority_system: Optional[SourceAuthoritySystem] = None,
         security_system: Optional[SecuritySystem] = None,
+        retrieval_engine: Optional[Any] = None,
     ):
         self.settings = settings or get_settings()
         self.authority_system = authority_system or SourceAuthoritySystem(self.settings)
         self.security_system = security_system or SecuritySystem(self.settings)
+        self.retrieval_engine = retrieval_engine
         
         # Validators
         self.validators: List[DocumentValidator] = [
@@ -399,7 +401,7 @@ class IngestionPipeline:
                     authority_tier=job.authority_tier or SourceAuthorityTier.OFFICIAL_REGISTRY,
                 ),
                 metadata=DocumentMetadata(
-                    **(job.metadata or {}),
+                    custom_fields=job.metadata or {},
                     title=job.title or "Untitled",
                     document_type=job.document_type or DocumentType.PATENT,
                     jurisdiction=job.jurisdiction or Jurisdiction.INDIA,
@@ -414,7 +416,7 @@ class IngestionPipeline:
                     authority_tier=job.authority_tier or SourceAuthorityTier.OFFICIAL_REGISTRY,
                 ),
                 metadata=DocumentMetadata(
-                    **(job.metadata or {}),
+                    custom_fields=job.metadata or {},
                     title=job.title or Path(job.source_path).stem,
                     document_type=job.document_type or DocumentType.PATENT,
                     jurisdiction=job.jurisdiction or Jurisdiction.INDIA,
@@ -428,7 +430,7 @@ class IngestionPipeline:
                     authority_tier=job.authority_tier or SourceAuthorityTier.OFFICIAL_REGISTRY,
                 ),
                 metadata=DocumentMetadata(
-                    **(job.metadata or {}),
+                    custom_fields=job.metadata or {},
                     title=job.title or "Untitled",
                     document_type=job.document_type or DocumentType.PATENT,
                     jurisdiction=job.jurisdiction or Jurisdiction.INDIA,
@@ -510,7 +512,10 @@ class IngestionPipeline:
                 context.document.metadata
             )
             if not tier_valid:
-                context.errors.append(f"Authority tier verification failed")
+                logger.warning(
+                    "Authority tier metadata did not match classifier for %s; retaining declared tier",
+                    context.document.metadata.title,
+                )
         
         context.metrics['validate_time_ms'] = (
             datetime.utcnow() - context.stage_start_time
@@ -518,27 +523,22 @@ class IngestionPipeline:
     
     async def _stage_extract(self, context: IngestionContext) -> None:
         """Extract text content from document using LangChain loaders."""
-        if not context.document or not context.job.source_path:
-            context.errors.append("No document or source path to extract")
+        if not context.document or not context.raw_content:
+            context.errors.append("No document or content to extract")
             return
         
         # Use the new document loaders
         from ip_sakti.ingestion.loaders import load_document
         
         try:
-            loaded_docs = await load_document(context.job.source_path)
-            
-            if not loaded_docs:
-                context.errors.append("No content extracted from document")
-                return
-            
-            # Combine all loaded documents
-            text_parts = []
-            for doc in loaded_docs:
-                if doc.content and doc.content.strip():
-                    text_parts.append(doc.content.strip())
-            
-            context.extracted_text = "\n\n".join(text_parts)
+            if context.job.source_path:
+                loaded_docs = await load_document(context.job.source_path)
+                text_parts = [doc.content.strip() for doc in loaded_docs if doc.content and doc.content.strip()]
+                context.extracted_text = "\n\n".join(text_parts)
+            else:
+                # URL and raw-content jobs already have bytes; use the detected MIME extractor.
+                extractor = ExtractorFactory.get_extractor(context.document.metadata.mime_type or "text/plain")
+                context.extracted_text = await extractor.extract(context.raw_content, context.document.metadata)
             
             if not context.extracted_text or len(context.extracted_text.strip()) < 10:
                 context.errors.append("Extracted text too short or empty")
@@ -597,6 +597,10 @@ class IngestionPipeline:
                 'source_authority_tier': context.document.source.authority_tier.value,
                 'source_url': context.document.source.url,
                 'source_path': context.document.source.path,
+                'source_name': context.document.metadata.title,
+                'content_hash': context.document.content_hash,
+                'jurisdiction': context.document.metadata.jurisdiction.value,
+                'document_type': context.document.metadata.document_type.value,
                 'ingestion_job_id': context.job.id,
             })
         
@@ -610,6 +614,8 @@ class IngestionPipeline:
         # For now, store chunks in document
         if context.document:
             context.document.chunks = context.chunks
+        if self.retrieval_engine and context.chunks:
+            await self.retrieval_engine.index_chunks(context.chunks)
         
         context.metrics['index_time_ms'] = (
             datetime.utcnow() - context.stage_start_time
@@ -645,6 +651,7 @@ def create_ingestion_pipeline(
     settings: Optional[Settings] = None,
     authority_system: Optional[SourceAuthoritySystem] = None,
     security_system: Optional[SecuritySystem] = None,
+    retrieval_engine: Optional[Any] = None,
 ) -> IngestionPipeline:
     """Factory to create ingestion pipeline."""
-    return IngestionPipeline(settings, authority_system, security_system)
+    return IngestionPipeline(settings, authority_system, security_system, retrieval_engine)

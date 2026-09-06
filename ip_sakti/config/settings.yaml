@@ -7,11 +7,11 @@
 technology:
   # Embedding Models
   embedding:
-    primary: "BAAI/bge-m3"                    # Multilingual dense + sparse
-    fallback: "jinaai/jina-embeddings-v3"     # Alternative multilingual
-    dimensions: 1024
-    max_tokens: 8192
-    batch_size: 32
+    primary: "sentence-transformers/all-MiniLM-L6-v2" # Local CPU-friendly dense embeddings
+    fallback: "sentence-transformers/all-MiniLM-L6-v2"
+    dimensions: 384
+    max_tokens: 512
+    batch_size: 64
   
   # Reranker
   reranker:
@@ -22,8 +22,10 @@ technology:
   
   # LLM (Generation)
   llm:
-    primary: "gpt-4o"                          # Primary generation
-    fallback: "gpt-4o-mini"                    # Cost-optimized
+    provider: "nvidia"                         # NVIDIA NIM OpenAI-compatible API
+    base_url: "https://integrate.api.nvidia.com/v1"
+    primary: "openai/gpt-oss-20b"               # NVIDIA hosted model
+    fallback: "openai/gpt-oss-20b"              # Explicit fallback must be configured separately
     temperature: 0.1                           # Low for legal accuracy
     max_tokens: 4096
     top_p: 0.9
@@ -466,6 +468,11 @@ rag:
     top_k_reranked: 20
     top_k_final: 10
     min_score_threshold: 0.3
+    positive_semantic_queries: 24
+    negative_semantic_queries: 3
+    positive_top_k: 4
+    negative_top_k: 3
+    negative_penalty: 0.20
   
   generation:
     max_context_tokens: 8000

@@ -1,0 +1,18 @@
+services:
+  ip-sakti-api:
+    build: .
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ip_sakti_runtime:/app/data/runtime
+      - ./data/corpus:/app/data/corpus:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  ip_sakti_runtime:

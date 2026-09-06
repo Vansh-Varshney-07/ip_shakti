@@ -5,13 +5,17 @@ References Phase 9 (RAG pipeline) for pipeline logic.
 """
 
 import asyncio
+import json
 import logging
+import os
+import sqlite3
 import time
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
@@ -29,6 +33,9 @@ from ip_sakti.authority.authority_system import SourceAuthoritySystem
 # Import new embedding module
 from ip_sakti.embedding import (
     EmbeddingProvider,
+    AsyncEmbeddingProvider,
+    EmbeddingConfig,
+    SentenceTransformerEmbeddingProvider,
     VectorStore,
     VectorStoreConfig,
     VectorStoreType,
@@ -182,6 +189,8 @@ class InMemoryVectorStore(VectorStore):
     def _matches_filters(self, chunk: DocumentChunk, filters: Dict[str, Any]) -> bool:
         """Check if chunk matches filters."""
         for key, value in filters.items():
+            if value is None:
+                continue
             if key == 'jurisdiction':
                 if chunk.metadata.get('jurisdiction') != value:
                     return False
@@ -209,6 +218,62 @@ class InMemoryVectorStore(VectorStore):
         }
     
     async def close(self) -> None:
+        self.chunks.clear()
+        self.vectors.clear()
+
+
+class SQLiteVectorStore(InMemoryVectorStore):
+    """Local persistent vector store for the default single-node deployment."""
+
+    def __init__(self, config: Dict[str, Any]):
+        super().__init__(config)
+        self.path = config.get("persist_path", "data/runtime/ip_sakti_index.sqlite3")
+        self._connection: Optional[sqlite3.Connection] = None
+
+    async def initialize(self) -> None:
+        Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+        self._connection = sqlite3.connect(self.path)
+        self._connection.execute("CREATE TABLE IF NOT EXISTS chunks (id TEXT PRIMARY KEY, payload TEXT NOT NULL, vector BLOB NOT NULL)")
+        self._connection.commit()
+        rows = self._connection.execute("SELECT payload, vector FROM chunks").fetchall()
+        for payload, vector_blob in rows:
+            data = json.loads(payload)
+            chunk = DocumentChunk(
+                id=data["id"], document_id=data["document_id"], content=data["content"],
+                chunk_index=data.get("chunk_index", 0), start_char=data.get("start_char", 0),
+                end_char=data.get("end_char", 0), metadata=data.get("metadata", {}),
+                authority_score=data.get("authority_score", 0.0),
+            )
+            self.chunks[chunk.id] = chunk
+            self.vectors[chunk.id] = np.frombuffer(vector_blob, dtype=np.float32)
+        self._index_built = True
+
+    async def upsert(self, chunks: List[DocumentChunk], vectors: np.ndarray) -> None:
+        await super().upsert(chunks, vectors)
+        if not self._connection:
+            return
+        for chunk, vector in zip(chunks, vectors):
+            payload = json.dumps({
+                "id": chunk.id, "document_id": chunk.document_id, "content": chunk.content,
+                "chunk_index": chunk.chunk_index, "start_char": chunk.start_char, "end_char": chunk.end_char,
+                "metadata": chunk.metadata, "authority_score": chunk.authority_score,
+            }, default=str)
+            self._connection.execute(
+                "INSERT OR REPLACE INTO chunks(id, payload, vector) VALUES (?, ?, ?)",
+                (chunk.id, payload, sqlite3.Binary(np.asarray(vector, dtype=np.float32).tobytes())),
+            )
+        self._connection.commit()
+
+    async def delete(self, chunk_ids: List[str]) -> None:
+        await super().delete(chunk_ids)
+        if self._connection:
+            self._connection.executemany("DELETE FROM chunks WHERE id = ?", [(chunk_id,) for chunk_id in chunk_ids])
+            self._connection.commit()
+
+    async def close(self) -> None:
+        if self._connection:
+            self._connection.close()
+            self._connection = None
         self.chunks.clear()
         self.vectors.clear()
 
@@ -336,6 +401,8 @@ class InMemoryKeywordIndex(KeywordIndex):
     
     def _matches_filters(self, chunk: DocumentChunk, filters: Dict[str, Any]) -> bool:
         for key, value in filters.items():
+            if value is None:
+                continue
             if key == 'jurisdiction':
                 if chunk.metadata.get('jurisdiction') != value:
                     return False
@@ -462,12 +529,14 @@ class RetrievalEngine:
     def __init__(self, config: RetrievalConfig):
         self.config = config
         self.settings = get_settings()
+        self.config.vector_store_config.setdefault("persist_path", self.settings.index_path)
         
         # Components
         self.vector_store = self._create_vector_store()
         self.keyword_index = self._create_keyword_index()
         self.cache = self._create_cache()
         self.embedding_provider = self._create_embedding_provider()
+        self.knowledge_graph = None
         
         # Authority system for filtering
         self.authority_system = SourceAuthoritySystem(self.settings)
@@ -484,8 +553,10 @@ class RetrievalEngine:
         }
     
     def _create_vector_store(self) -> VectorStore:
-        """Create vector store - use local InMemoryVectorStore for testing."""
-        return InMemoryVectorStore(self.config.vector_store_config)
+        """Use SQLite persistence in normal mode and memory only in explicit test mode."""
+        if self.settings.test_mode:
+            return InMemoryVectorStore(self.config.vector_store_config)
+        return SQLiteVectorStore(self.config.vector_store_config)
     
     def _create_keyword_index(self) -> KeywordIndex:
         return InMemoryKeywordIndex(self.config.vector_store_config)
@@ -502,8 +573,18 @@ class RetrievalEngine:
         return InMemoryCache(cache_config)
     
     def _create_embedding_provider(self) -> EmbeddingProvider:
-        # Use mock embedding provider for development (no external dependencies)
-        return MockEmbeddingProvider(dimension=self.settings.embedding_dimensions)
+        if self.settings.test_mode:
+            logger.warning("Using deterministic mock embeddings because IP_SAKTI_TEST_MODE is enabled")
+            return MockEmbeddingProvider(dimension=self.settings.embedding_dimensions)
+
+        return AsyncEmbeddingProvider(SentenceTransformerEmbeddingProvider(EmbeddingConfig(
+            model_name=self.settings.embedding_model,
+            fallback_model=self.settings.embedding_fallback,
+            dimension=self.settings.embedding_dimensions,
+            max_tokens=self.settings.embedding_max_tokens,
+            batch_size=self.settings.embedding_batch_size,
+            device="cpu",
+        )))
     
     async def initialize(self) -> None:
         """Initialize all components."""
@@ -512,6 +593,13 @@ class RetrievalEngine:
             self.keyword_index.initialize(),
             self.cache.initialize() if hasattr(self.cache, 'initialize') else asyncio.sleep(0),
         )
+        # Rebuild the sparse index from persisted chunks after a restart.
+        persisted_chunks = list(getattr(self.vector_store, "chunks", {}).values())
+        if persisted_chunks:
+            await self.keyword_index.upsert(persisted_chunks)
+        from ip_sakti.kg.knowledge_graph import KnowledgeGraph
+        self.knowledge_graph = KnowledgeGraph(settings=self.settings)
+        await self.knowledge_graph.initialize()
         logger.info("Retrieval engine initialized")
     
     async def index_chunks(self, chunks: List[DocumentChunk]) -> None:
@@ -528,6 +616,8 @@ class RetrievalEngine:
             self.vector_store.upsert(chunks, vectors),
             self.keyword_index.upsert(chunks),
         )
+        if self.knowledge_graph:
+            await self.knowledge_graph.ingest_chunks(chunks)
         
         logger.info(f"Indexed {len(chunks)} chunks")
     
@@ -652,10 +742,24 @@ class RetrievalEngine:
         top_k: int,
         filters: Dict[str, Any],
     ) -> List[RetrievalResult]:
-        """Graph-based retrieval (placeholder - integrates with Phase 13 Knowledge Graph)."""
-        # In production, this would query the knowledge graph
-        # For now, fall back to hybrid
-        return await self._hybrid_search(query, top_k, filters, self.config.hybrid_alpha)
+        """Retrieve indexed chunks referenced by entities in the knowledge graph."""
+        if not self.knowledge_graph:
+            return []
+        terms = {term.lower() for term in query.split() if len(term) > 2}
+        graph_store = self.knowledge_graph.graph_store
+        matched_chunks: Dict[str, float] = {}
+        for entity in graph_store.entities.values():
+            name = entity.name.lower()
+            if any(term in name for term in terms):
+                for chunk_id in entity.source_chunks:
+                    matched_chunks[chunk_id] = max(matched_chunks.get(chunk_id, 0.0), entity.confidence)
+        results = []
+        for chunk_id, score in matched_chunks.items():
+            chunk = getattr(self.vector_store, "chunks", {}).get(chunk_id)
+            if chunk and self.vector_store._matches_filters(chunk, filters):
+                results.append(RetrievalResult(chunk=chunk, score=score, strategy=RetrievalStrategy.GRAPH))
+        results.sort(key=lambda result: result.score, reverse=True)
+        return results[:top_k]
     
     def _fuse_results(
         self,
@@ -747,6 +851,8 @@ class RetrievalEngine:
             self.keyword_index.close(),
             self.cache.clear() if hasattr(self.cache, 'clear') else asyncio.sleep(0),
         )
+        if self.knowledge_graph:
+            await self.knowledge_graph.close()
         logger.info("Retrieval engine closed")
 
 

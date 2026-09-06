@@ -145,6 +145,8 @@ class LexicalRetriever(BaseRetrievalStrategy):
     def _matches_filters(self, chunk: DocumentChunk, filters: Dict[str, Any]) -> bool:
         """Check if chunk matches filters."""
         for key, value in filters.items():
+            if value is None:
+                continue
             if key == 'jurisdiction':
                 if chunk.metadata.get('jurisdiction') != value:
                     return False

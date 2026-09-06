@@ -953,8 +953,11 @@ class SourceAuthoritySystem:
                 classify_metadata["source_type"] = source_type.lower()
             
             # For acts/statutes, assume gazette_published if not specified
+            custom_fields = getattr(metadata, "custom_fields", {}) or {}
             if classify_metadata["source_type"] in ["act", "amendment_act", "ordinance", "constitution", "treaty", "protocol", "cop_decision"]:
-                classify_metadata["gazette_published"] = classify_metadata.get("gazette_published", True)
+                classify_metadata["gazette_published"] = custom_fields.get("gazette_published", True)
+            elif classify_metadata["source_type"] in ["rule", "regulation", "notification", "order"]:
+                classify_metadata["gazette_published"] = custom_fields.get("gazette_published", False)
             
             expected_tier = self.classifier.classify(classify_metadata)
             return tier == expected_tier.authority_tier

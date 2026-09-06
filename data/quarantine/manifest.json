@@ -1,0 +1,12 @@
+{
+  "quarantine_id": "corpus-invalid-2026-09-06",
+  "reason": "empty files, invalid PDF signatures, or duplicate content",
+  "authoritative_corpus": "data/corpus",
+  "files_preserved_under": "data/quarantine/corpus-invalid-2026-09-06",
+  "replacement_required": true,
+  "validation_after_quarantine": {
+    "file_count": 23,
+    "valid": true,
+    "issues": 0
+  }
+}

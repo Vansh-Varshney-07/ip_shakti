@@ -1,8 +1,11 @@
 """
 IP-SAKTI Knowledge Graph
 Phase 13: Implements the knowledge graph for GraphRAG.
-Requires Phase 11 (Evaluation) and Phase 12 (Experiments) to justify GraphRAG approach.
+    GraphRAG runtime. Research justification is loaded lazily so API startup does
+    not import the optional experiment stack.
 """
+
+from __future__ import annotations
 
 import asyncio
 import json
@@ -22,22 +25,33 @@ from ip_sakti.core.models import (
     Document,
     DocumentChunk,
     DocumentType,
-    Entity,
-    EntityType,
-    Jurisdiction,
-    Relation,
-    RelationType,
 )
-from ip_sakti.experiments.framework import (
-    ExperimentManager,
-    ExperimentConfig,
-    ExperimentType,
-    ExperimentParameter,
-    IPExperimentTemplates,
-)
-from ip_sakti.eval.evaluation import EvaluationHarness, EvaluationConfig
-
 logger = logging.getLogger(__name__)
+
+
+class EntityType(str, Enum):
+    PATENT = "patent"
+    TRADEMARK = "trademark"
+    INVENTOR = "inventor"
+    ASSIGNEE = "assignee"
+    OWNER = "owner"
+    STATUTE = "statute"
+    CASE = "case"
+    COURT = "court"
+    JUDGE = "judge"
+    NICE_CLASS = "nice_class"
+    TECHNOLOGY_CLASS = "technology_class"
+
+
+class RelationType(str, Enum):
+    INVENTED_BY = "invented_by"
+    ASSIGNED_TO = "assigned_to"
+    CITES = "cites"
+    CLAIMS_PRIORITY = "claims_priority"
+    CLASSIFIED_AS = "classified_as"
+    OPPOSSES = "opposes"
+    INVALIDATES = "invalidates"
+    LICENSES_TO = "licenses_to"
 
 
 class GraphStoreType(str, Enum):
@@ -632,6 +646,7 @@ class GraphRAGJustification:
         """Run experiment comparing baseline RAG vs GraphRAG."""
         
         # Create ablation experiment
+        from ip_sakti.experiments.framework import ExperimentConfig, ExperimentType
         config = ExperimentConfig(
             name="GraphRAG Justification",
             description="Compare baseline RAG vs GraphRAG with knowledge graph",
@@ -687,12 +702,9 @@ class KnowledgeGraph:
         self.retriever = GraphRetriever(self.graph_store, self.settings)
         
         # Experiment integration
-        self.experiment_manager = ExperimentManager(self.settings)
-        self.evaluation_harness = EvaluationHarness()
-        self.graphrag_justification = GraphRAGJustification(
-            self.experiment_manager,
-            self.evaluation_harness,
-        )
+        self.experiment_manager = None
+        self.evaluation_harness = None
+        self.graphrag_justification = None
     
     def _create_graph_store(self) -> GraphStore:
         store_type = self.config.store_type
@@ -752,7 +764,11 @@ class KnowledgeGraph:
         graphrag_factory: Callable[[Dict[str, Any]], Any],
     ) -> Dict[str, Any]:
         """Run justification experiment for GraphRAG."""
-        return await self.graphrag_justification.run_graphrag_justification(
+        from ip_sakti.experiments.framework import ExperimentManager
+        from ip_sakti.eval.evaluation import EvaluationHarness
+        manager = ExperimentManager(self.settings)
+        harness = EvaluationHarness()
+        return await GraphRAGJustification(manager, harness).run_graphrag_justification(
             test_cases, baseline_factory, graphrag_factory
         )
     
@@ -764,14 +780,16 @@ class KnowledgeGraph:
         system_factory: Callable[[Dict[str, Any]], Any],
     ) -> Dict[str, Any]:
         """Run a generic experiment on the knowledge graph."""
-        experiment = self.experiment_manager.create_experiment(
+        from ip_sakti.experiments.framework import ExperimentManager
+        manager = ExperimentManager(self.settings)
+        experiment = manager.create_experiment(
             config=config,
             search_space=search_space,
             test_cases=test_cases,
         )
         
-        result = await self.experiment_manager.run_experiment(experiment.id, system_factory)
-        return self.experiment_manager.get_experiment_results(result.id)
+        result = await manager.run_experiment(experiment.id, system_factory)
+        return manager.get_experiment_results(result.id)
     
     async def close(self) -> None:
         """Close the knowledge graph."""

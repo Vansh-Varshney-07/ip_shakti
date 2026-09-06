@@ -2,6 +2,8 @@
 
 An advanced RAG (Retrieval-Augmented Generation) system for Intellectual Property, Ayurveda, Traditional Knowledge, and Biodiversity law. Built with a modular, production-ready architecture supporting multiple retrieval strategies, advanced reranking, citation-first generation, and self-correcting agentic workflows.
 
+The current runnable path is a citation-grounded local deployment: FastAPI serves the authenticated API and web app, SQLite stores the populated vector index, Sentence Transformers provides local embeddings, and NVIDIA NIM provides generation when `IP_SAKTI_TEST_MODE=false`.
+
 ## Architecture Overview
 
 ```
@@ -38,6 +40,8 @@ ip_sakti/
 - **Ayurveda**: Formulations, Classical texts, Regulatory
 - **Traditional Knowledge**: Prior art, Community knowledge, TKDL
 - **Biodiversity/ABS**: CBD, Nagoya Protocol, NBA compliance
+- **Formulation triage**: natural-language product facts are routed through classification, procedure, compliance, IP, TK, and ABS retrieval angles rather than requiring an Act number.
+- **Contrastive retrieval**: 24 positive semantic probes plus 3 negative/exclusion probes are fused before reranking; negative matches receive a configurable penalty.
 
 ### Production Ready
 - **Configuration-Driven**: YAML-based module selection with fallbacks
@@ -45,6 +49,8 @@ ip_sakti/
 - **Caching**: Redis-backed with TTL and invalidation
 - **Multilingual**: Hindi/English with Indic language support
 - **Evaluation**: RAGAS, Faithfulness, Answer Relevancy, Context Precision
+- **Live telemetry**: dashboard metrics and pipeline graph reflect completed queries in the current API process.
+- **Document modes**: uploaded PDFs can either enter the persistent ingestion/indexing pipeline or be used as ephemeral prompt context for one query.
 
 ## Quick Start
 
@@ -130,16 +136,19 @@ generation:
   max_tokens: 2048
 ```
 
+The checked-in runtime configuration uses `sentence-transformers/all-MiniLM-L6-v2` with 384-dimensional vectors for a practical local CPU deployment. Keep credentials in the ignored `.env`; `.env.example` is intentionally blank.
+
 ## API Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/v1/chat` | POST | Chat with RAG system |
-| `/api/v1/ingest` | POST | Ingest documents |
-| `/api/v1/search` | POST | Search corpus |
-| `/api/v1/eval` | POST | Run evaluation |
-| `/api/v1/health` | GET | Health check |
-| `/api/v1/metrics` | GET | Prometheus metrics |
+| `/auth/token` | POST | Obtain a local JWT for the web client |
+| `/query` | POST | Authenticated grounded RAG query |
+| `/query/upload` | POST | Ask with a PDF as ephemeral prompt context |
+| `/ingest/upload` | POST | Authenticated upload into the persistent corpus |
+| `/documents` | GET | Indexed document summaries |
+| `/dashboard/metrics` | GET | Corpus and live query telemetry |
+| `/health` | GET | Component health and model readiness |
 
 ## Web Interface
 
@@ -150,6 +159,8 @@ The web frontend (`/web`) provides:
 - **Files**: Document management and ingestion status
 
 ## Evaluation
+
+The workflow smoke suite contains 20 deliberately different prompts covering formulation classification, patents, trademarks, GI, ABS, TK, procedures, compliance, international systems, multilingual input, and clarification behavior. It is stored at `docs/prompt_suite.json`.
 
 Run comprehensive evaluation:
 ```bash
@@ -205,6 +216,12 @@ pytest
 
 # Run with coverage
 pytest --cov=ip_sakti --cov-report=html
+```
+
+For the focused local checks:
+```bash
+pytest -q
+node --check ip_sakti/web/static/js/app.js
 ```
 
 ## Deployment

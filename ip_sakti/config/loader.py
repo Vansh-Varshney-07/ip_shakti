@@ -8,6 +8,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
 import yaml
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
 
 
 @dataclass
@@ -16,6 +19,13 @@ class Settings:
     
     # Raw config dict
     _config: Dict[str, Any] = field(default_factory=dict, repr=False)
+
+    # Test substitutes are enabled only by an explicit runtime switch.
+    environment: str = "development"
+    test_mode: bool = False
+    corpus_root: str = ""
+    index_path: str = "data/runtime/ip_sakti_index.sqlite3"
+    api_cors_origins: List[str] = field(default_factory=list)
     
     # Technology stack
     embedding_model: str = "BAAI/bge-m3"
@@ -34,6 +44,8 @@ class Settings:
     llm_temperature: float = 0.1
     llm_max_tokens: int = 4096
     llm_top_p: float = 0.9
+    llm_provider: str = "nvidia"
+    llm_base_url: str = "https://integrate.api.nvidia.com/v1"
     
     vector_db_type: str = "qdrant"
     vector_db_host: str = "localhost"
@@ -92,7 +104,10 @@ class Settings:
     tls_min_version: str = "TLSv1.3"
     
     # Ingestion allowed paths
-    allowed_ingestion_paths: List[str] = field(default_factory=lambda: ["/mnt/c/Users/vvars/OneDrive/Desktop/sih rag/data", "/tmp/ingestion"])
+    allowed_ingestion_paths: List[str] = field(default_factory=lambda: [
+        str(Path(__file__).resolve().parents[2] / "data"),
+        str(Path.cwd() / "data"),
+    ])
     
     # Ingestion
     ingestion_sources: Dict[str, Dict[str, Any]] = field(default_factory=dict)
@@ -179,6 +194,15 @@ class Settings:
     
     def _apply_env_overrides(self):
         """Apply environment variable overrides."""
+        self.environment = os.getenv("IP_SAKTI_ENV", os.getenv("ENVIRONMENT", self.environment))
+        self.test_mode = os.getenv("IP_SAKTI_TEST_MODE", "true" if self.test_mode else "false").lower() in {
+            "1", "true", "yes", "on"
+        }
+        self.corpus_root = os.getenv("IP_SAKTI_CORPUS_ROOT", self.corpus_root)
+        self.index_path = os.getenv("IP_SAKTI_INDEX_PATH", self.index_path)
+        cors = os.getenv("IP_SAKTI_CORS_ORIGINS")
+        if cors:
+            self.api_cors_origins = [origin.strip() for origin in cors.split(",") if origin.strip()]
         # Database URLs
         if db_url := os.getenv("DATABASE_URL"):
             self._config.setdefault("relational_db", {})["url"] = db_url
@@ -195,10 +219,16 @@ class Settings:
         # API keys
         if openai_key := os.getenv("OPENAI_API_KEY"):
             self._config.setdefault("llm", {})["api_key"] = openai_key
+        if provider := os.getenv("IP_SAKTI_LLM_PROVIDER"):
+            self.llm_provider = provider.lower()
+        if base_url := os.getenv("IP_SAKTI_LLM_BASE_URL"):
+            self.llm_base_url = base_url.rstrip("/")
+        if model := os.getenv("IP_SAKTI_LLM_MODEL"):
+            self.llm_primary = model
         
         # Environment
-        if env := os.getenv("ENVIRONMENT"):
-            self.deployment_environment = env
+        if self.environment:
+            self.deployment_environment = self.environment
         
         # Log level
         if log_level := os.getenv("LOG_LEVEL"):
@@ -238,6 +268,8 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
     settings.llm_temperature = llm.get("temperature", settings.llm_temperature)
     settings.llm_max_tokens = llm.get("max_tokens", settings.llm_max_tokens)
     settings.llm_top_p = llm.get("top_p", settings.llm_top_p)
+    settings.llm_provider = llm.get("provider", settings.llm_provider)
+    settings.llm_base_url = llm.get("base_url", settings.llm_base_url).rstrip("/")
     
     vdb = tech.get("vector_db", {})
     settings.vector_db_type = vdb.get("type", settings.vector_db_type)
@@ -308,6 +340,9 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
     
     # Allowed ingestion paths
     settings.allowed_ingestion_paths = sec.get("allowed_ingestion_paths", settings.allowed_ingestion_paths)
+    repo_data = str(Path(__file__).resolve().parents[2] / "data")
+    if repo_data not in settings.allowed_ingestion_paths:
+        settings.allowed_ingestion_paths.append(repo_data)
     
     # Ingestion
     ing = config.get("ingestion", {})
@@ -353,6 +388,10 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
     
     # Module selection (Phase 1.5)
     settings.modules = config.get("modules", {})
+
+    # Re-apply environment variables after YAML so deployment settings win over
+    # repository defaults without requiring edits to the checked-in config.
+    settings._apply_env_overrides()
     
     return settings
 

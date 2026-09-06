@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ip_sakti.core.models import DocumentChunk, RetrievalResult, RetrievalStrategy
 from ip_sakti.retrieval.strategies.base import RetrievalConfig, SearchRequest, SearchResult, RetrievalStrategy as BaseRetrievalStrategy
-from ip_sakti.embedding.embedding_provider import EmbeddingProvider
+from ip_sakti.embedding.embedder import EmbeddingProvider
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +140,8 @@ class VectorRetriever(BaseRetrievalStrategy):
     def _matches_filters(self, chunk: DocumentChunk, filters: Dict[str, Any]) -> bool:
         """Check if chunk matches filters."""
         for key, value in filters.items():
+            if value is None:
+                continue
             if key == 'jurisdiction':
                 if chunk.metadata.get('jurisdiction') != value:
                     return False

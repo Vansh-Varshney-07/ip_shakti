@@ -69,9 +69,14 @@ class TextLoaderWrapper(BaseDocumentLoader):
         return self._loader_class
     
     async def load(self, file_path: str) -> List[LoadedDocument]:
-        loader_class = self._get_loader()
-        loader = loader_class(file_path, encoding=self.encoding)
-        docs = loader.load()
+        try:
+            loader_class = self._get_loader()
+            loader = loader_class(file_path, encoding=self.encoding)
+            docs = loader.load()
+        except ImportError:
+            logger.info("langchain-community unavailable; using native text loader for %s", file_path)
+            with open(file_path, "r", encoding=self.encoding, errors="ignore") as handle:
+                docs = [type("TextDocument", (), {"page_content": handle.read(), "metadata": {"source": file_path}})()]
         
         return [
             LoadedDocument(
@@ -100,10 +105,18 @@ class PDFLoaderWrapper(BaseDocumentLoader):
         return self._loader_class
     
     async def load(self, file_path: str) -> List[LoadedDocument]:
-        loader_class = self._get_loader()
         try:
+            loader_class = self._get_loader()
             loader = loader_class(file_path)
             docs = loader.load()
+        except ImportError:
+            logger.info("langchain-community unavailable; using pdfplumber loader for %s", file_path)
+            import pdfplumber
+            with pdfplumber.open(file_path) as pdf:
+                docs = [
+                    type("PDFDocument", (), {"page_content": page.extract_text() or "", "metadata": {"source": file_path}})()
+                    for page in pdf.pages
+                ]
         except Exception as e:
             # Fallback to HTML loader for files with .pdf extension that are actually HTML
             logger.warning(f"PyPDFLoader failed for {file_path}: {e}, trying HTML loader")

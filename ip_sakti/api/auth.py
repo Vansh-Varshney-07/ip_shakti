@@ -472,6 +472,18 @@ async def get_current_user(
     if api_key_user:
         return api_key_user
 
+    # Local UI smoke tests may opt into a clearly named bypass. Never enable
+    # this implicitly in production.
+    import os
+    if os.getenv("IP_SAKTI_TEST_MODE", "false").lower() in {"1", "true", "yes", "on"}:
+        return CurrentUser(
+            user_id="test-user",
+            subject="test-user",
+            scopes=["query", "query:read", "ingest", "ingest:write", "admin"],
+            roles=["admin"],
+            auth_method="test_mode",
+        )
+
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Authentication required",

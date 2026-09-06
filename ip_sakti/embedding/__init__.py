@@ -13,6 +13,7 @@ from ip_sakti.embedding.embedder import (
     EmbeddingConfig,
     EmbeddingModelType,
     EmbeddingResult,
+    AsyncEmbeddingProvider,
 )
 from ip_sakti.embedding.vector_store import (
     VectorStore,
@@ -39,6 +40,7 @@ __all__ = [
     "EmbeddingConfig",
     "EmbeddingModelType",
     "EmbeddingResult",
+    "AsyncEmbeddingProvider",
     # Vector Store
     "VectorStore",
     "VectorStoreConfig",
