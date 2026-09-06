@@ -193,15 +193,23 @@ table.files-table tr:hover td{background:var(--panel-2);}
 .src-row .sr-rate{font-family:'IBM Plex Mono',monospace;color:var(--text-soft);font-size:10.5px;}
 
 .p-center{flex:1.6;display:flex;flex-direction:column;min-width:0;gap:12px;}
-.p-canvas-wrap{flex:1;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius-card);overflow:auto;position:relative;padding:18px 10px 10px;}
-.col-headers{display:grid;grid-template-columns:repeat(5,1fr);min-width:760px;margin-bottom:8px;padding:0 10px;}
+.p-canvas-wrap{flex:1;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius-card);overflow:hidden;position:relative;padding:18px 10px 10px;}
+.col-headers{display:grid;grid-template-columns:repeat(5,1fr);min-width:1120px;margin-bottom:8px;padding:0 10px;}
 .col-headers div{font-size:10px;color:var(--text-mute);letter-spacing:.03em;}
 .col-headers div .cnum{font-family:'IBM Plex Mono',monospace;color:var(--gold);margin-right:5px;}
-.node-canvas{position:relative;min-width:760px;}
-svg.connectors{position:absolute;top:0;left:0;width:1000px;height:510px;pointer-events:none;overflow:visible;}
+.graph-toolbar{position:absolute;top:12px;right:14px;z-index:5;display:flex;align-items:center;gap:5px;padding:4px 6px;border:1px solid var(--border);border-radius:var(--radius-control);background:rgba(237,232,216,.92);}
+.graph-hint{font-size:9.5px;color:var(--text-mute);margin-right:4px;}
+.graph-btn{min-width:25px;height:24px;border:1px solid var(--border-strong);border-radius:6px;background:var(--panel-2);color:var(--text);font:600 13px 'IBM Plex Sans',sans-serif;cursor:pointer;}
+.graph-btn:hover{border-color:var(--gold);color:var(--gold);}
+.graph-btn.graph-reset{font-size:10px;padding:0 7px;}
+.graph-zoom{width:38px;text-align:center;font:10px 'IBM Plex Mono',monospace;color:var(--text-soft);}
+.graph-viewport{position:absolute;inset:46px 10px 30px;overflow:hidden;cursor:grab;background:radial-gradient(circle at 50% 40%,rgba(169,190,147,.08),transparent 48%);}
+.graph-viewport.is-panning{cursor:grabbing;}
+.node-canvas{position:absolute;left:0;top:0;width:1120px;height:570px;transform-origin:0 0;}
+svg.connectors{position:absolute;top:0;left:0;width:1120px;height:570px;pointer-events:none;overflow:visible;}
 .connector-path{fill:none;stroke:var(--border-strong);stroke-width:1.2;stroke-dasharray:4 7;opacity:.9;animation:flowDash 3s linear infinite;}
 @keyframes flowDash{to{stroke-dashoffset:-22;}}
-.pnode{position:absolute;width:118px;transform:translateX(-50%);text-align:center;cursor:pointer;}
+.pnode{position:absolute;width:132px;transform:translateX(-50%);text-align:center;cursor:pointer;}
 .pnode{z-index:1;}
 .pnode .ring{
   width:46px;height:46px;border-radius:50%;margin:0 auto 6px;

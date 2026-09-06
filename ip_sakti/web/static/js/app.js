@@ -127,6 +127,32 @@ const pipelineNodes = [
   ["Reason", ["hybrid_fusion", "cross_reranking", "citation_generation", "verification"]],
   ["Serve", ["chat_serving", "dashboard_metrics", "audit_log", "api_responses"]],
 ];
+const graphState = { scale: .55, x: 0, y: 0, dragging: false, startX: 0, startY: 0, originX: 0, originY: 0 };
+function applyGraphTransform() {
+  const canvas = $("nodeCanvas");
+  if (!canvas) return;
+  canvas.style.transform = `translate(${graphState.x}px, ${graphState.y}px) scale(${graphState.scale})`;
+  $("graphZoomLabel").textContent = `${Math.round(graphState.scale * 100)}%`;
+}
+function setGraphScale(nextScale, anchorX = 0, anchorY = 0) {
+  const viewport = $("graphViewport");
+  const previous = graphState.scale;
+  graphState.scale = Math.max(.55, Math.min(1.8, nextScale));
+  if (viewport && previous !== graphState.scale) {
+    const ratio = graphState.scale / previous;
+    graphState.x = anchorX - (anchorX - graphState.x) * ratio;
+    graphState.y = anchorY - (anchorY - graphState.y) * ratio;
+  }
+  applyGraphTransform();
+}
+function resetGraphView() { graphState.scale = .55; graphState.x = 0; graphState.y = 0; applyGraphTransform(); }
+$("graphZoomIn").addEventListener("click", () => setGraphScale(graphState.scale + .1, 420, 220));
+$("graphZoomOut").addEventListener("click", () => setGraphScale(graphState.scale - .1, 420, 220));
+$("graphZoomReset").addEventListener("click", resetGraphView);
+$("graphViewport").addEventListener("wheel", event => { event.preventDefault(); const box = event.currentTarget.getBoundingClientRect(); setGraphScale(graphState.scale * (event.deltaY < 0 ? 1.1 : .9), event.clientX - box.left, event.clientY - box.top); }, { passive: false });
+$("graphViewport").addEventListener("pointerdown", event => { if (event.target.closest(".pnode")) return; const viewport = event.currentTarget; graphState.dragging = true; graphState.startX = event.clientX; graphState.startY = event.clientY; graphState.originX = graphState.x; graphState.originY = graphState.y; viewport.classList.add("is-panning"); viewport.setPointerCapture(event.pointerId); });
+$("graphViewport").addEventListener("pointermove", event => { if (!graphState.dragging) return; graphState.x = graphState.originX + event.clientX - graphState.startX; graphState.y = graphState.originY + event.clientY - graphState.startY; applyGraphTransform(); });
+$("graphViewport").addEventListener("pointerup", event => { graphState.dragging = false; event.currentTarget.classList.remove("is-panning"); });
 function renderPipeline(health) {
   const canvas = $("nodeCanvas"); const svg = $("connectorSvg");
   canvas.querySelectorAll(".pnode").forEach(node => node.remove());
@@ -141,7 +167,7 @@ function renderPipeline(health) {
   $("railSources").innerHTML = pipelineNodes[0][1].map(name => `<div class="src-row"><span class="sr-name">${escapeHtml(name)}</span><span class="sr-rate">live</span></div>`).join("");
   const nodePositions = [];
   pipelineNodes.forEach((column, columnIndex) => column[1].forEach((name, rowIndex) => {
-    const node = document.createElement("div"); node.className = "pnode"; node.style.left = `${30 + columnIndex * 190 + 59}px`; node.style.top = `${20 + rowIndex * 78}px`;
+    const node = document.createElement("div"); node.className = "pnode"; node.style.left = `${76 + columnIndex * 238}px`; node.style.top = `${30 + rowIndex * 86}px`;
     const component = details[name] || details.retrieval_engine || {};
     const nodeFailed = component.status === "unhealthy";
     if (nodeFailed) node.classList.add("failing");
@@ -154,20 +180,23 @@ function renderPipeline(health) {
       $("pDetail").innerHTML = `<span class="d-tag">${escapeHtml(column[0])}</span><h2>${escapeHtml(name)}</h2><div class="d-meta">LIVE TELEMETRY · ${escapeHtml(health.timestamp || "process snapshot")}</div><div class="d-state ${nodeFailed ? "bad" : ""}">${nodeFailed ? "Degraded" : "Healthy"}</div><div class="d-stats"><div class="stat"><div class="s-lbl">QUERIES SEEN</div><div class="s-val">${samples}</div></div><div class="stat"><div class="s-lbl">LATENCY</div><div class="s-val">${stageLatency ? `${Number(stageLatency[1]).toFixed(0)}ms` : "--"}</div></div></div><div class="d-desc">This node is connected to the live API health and query telemetry snapshot. No simulated throughput is displayed.</div><div class="d-flow"><div class="f-lbl">PIPELINE ROLE</div><span class="flow-pill">${escapeHtml(column[0])}</span><span class="flow-pill">${nodeFailed ? "retry required" : "healthy"}</span></div><table class="sample-table"><thead><tr><th>METRIC</th><th>VALUE</th></tr></thead><tbody><tr><td>indexed chunks</td><td>${Number(retrievalDetails.vector_store?.total_chunks || 0)}</td></tr><tr><td>cited queries</td><td>${Number(telemetry.cited || 0)}</td></tr><tr><td>abstentions</td><td>${Number(telemetry.abstained || 0)}</td></tr></tbody></table>`;
     });
     canvas.appendChild(node);
-    nodePositions.push({columnIndex, rowIndex, x: 30 + columnIndex * 190 + 82, y: 20 + rowIndex * 78 + 23});
+    nodePositions.push({columnIndex, rowIndex, x: 76 + columnIndex * 238, y: 30 + rowIndex * 86 + 23});
   }));
   svg.innerHTML = "";
-  svg.setAttribute("width", "1000"); svg.setAttribute("height", "510");
+  svg.setAttribute("width", "1120"); svg.setAttribute("height", "570");
   for (let columnIndex = 0; columnIndex < pipelineNodes.length - 1; columnIndex += 1) {
     const left = nodePositions.filter(node => node.columnIndex === columnIndex);
     const right = nodePositions.filter(node => node.columnIndex === columnIndex + 1);
     left.forEach((from, index) => {
-      const to = right[Math.min(index, right.length - 1)];
-      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-      path.setAttribute("d", `M ${from.x} ${from.y} C ${from.x + 70} ${from.y}, ${to.x - 70} ${to.y}, ${to.x} ${to.y}`);
-      path.setAttribute("class", "connector-path"); svg.appendChild(path);
+      const targets = [right[Math.min(index, right.length - 1)], right[Math.min(index + 1, right.length - 1)]];
+      targets.filter((target, targetIndex, all) => target && all.indexOf(target) === targetIndex).forEach(to => {
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("d", `M ${from.x} ${from.y} C ${from.x + 92} ${from.y}, ${to.x - 92} ${to.y}, ${to.x} ${to.y}`);
+        path.setAttribute("class", "connector-path"); svg.appendChild(path);
+      });
     });
   }
+  applyGraphTransform();
   $("logBody").innerHTML = `<div class="log-line"><span class="l-ts">${new Date().toLocaleTimeString("en-GB")}</span><span class="l-node">api</span><span class="l-msg ok">live health snapshot received · ${healthy}/${health.components?.length || 0} backend components healthy</span></div><div class="log-line"><span class="l-ts">${new Date().toLocaleTimeString("en-GB")}</span><span class="l-node">retrieval</span><span class="l-msg ok">${Number(telemetry.completed || 0)} completed queries · ${Number(telemetry.cited || 0)} cited</span></div>`;
   canvas.querySelector(".pnode")?.click();
 }

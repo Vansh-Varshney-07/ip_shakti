@@ -149,8 +149,17 @@
               <div><span class="cnum">04</span>REASON</div>
               <div><span class="cnum">05</span>SERVE</div>
             </div>
-            <div class="node-canvas" id="nodeCanvas">
-              <svg class="connectors" id="connectorSvg"></svg>
+            <div class="graph-toolbar" aria-label="Pipeline graph controls">
+              <span class="graph-hint">drag to pan · scroll to zoom</span>
+              <button type="button" class="graph-btn" id="graphZoomOut" title="Zoom out">-</button>
+              <span class="graph-zoom" id="graphZoomLabel">100%</span>
+              <button type="button" class="graph-btn" id="graphZoomIn" title="Zoom in">+</button>
+              <button type="button" class="graph-btn graph-reset" id="graphZoomReset">Reset</button>
+            </div>
+            <div class="graph-viewport" id="graphViewport">
+              <div class="node-canvas" id="nodeCanvas">
+                <svg class="connectors" id="connectorSvg"></svg>
+              </div>
             </div>
             <div class="canvas-caption">click a node for its live sample rows &middot; each light is one query batch &middot; a red burst is a batch hitting a failed node</div>
           </div>
