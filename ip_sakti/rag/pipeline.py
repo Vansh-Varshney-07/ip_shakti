@@ -842,6 +842,7 @@ class RAGPipeline:
         context.negative_queries = self.query_rewriter.build_negative_probes(
             context.original_query, analysis, configured_negative
         )
+        jurisdiction_filter = {"jurisdiction": context.query.jurisdiction.value}
 
         all_results = []
         # The positive pass deliberately uses semantic probes to cover the
@@ -850,7 +851,7 @@ class RAGPipeline:
             request = SearchRequest(
                 query=variant,
                 strategy=RetrievalStrategy.SEMANTIC,
-                filters={},
+                filters=jurisdiction_filter,
                 top_k=self.settings.rag_retrieval.get("positive_top_k", 4),
             )
             response = await self.retrieval_engine.search(request)
@@ -864,7 +865,7 @@ class RAGPipeline:
                     strategy=strategy,
                     # Query analysis is advisory; do not discard authoritative
                     # sources when the classifier returns an unnormalised value.
-                    filters={},
+                    filters=jurisdiction_filter,
                     top_k=self.settings.rag_retrieval.get("top_k_per_variant", 20),
                 )
                 response = await self.retrieval_engine.search(request)
@@ -875,7 +876,7 @@ class RAGPipeline:
             response = await self.retrieval_engine.search(SearchRequest(
                 query=variant,
                 strategy=RetrievalStrategy.SEMANTIC,
-                filters={},
+                filters=jurisdiction_filter,
                 top_k=self.settings.rag_retrieval.get("negative_top_k", 3),
             ))
             negative_results.extend(response.results)
@@ -896,7 +897,7 @@ class RAGPipeline:
             response = await self.retrieval_engine.search(SearchRequest(
                 query=context.original_query,
                 strategy=RetrievalStrategy.HYBRID,
-                filters={},
+                filters=jurisdiction_filter,
                 top_k=self.settings.rag_retrieval.get("top_k_final", 10),
             ))
             all_results.extend(response.results)

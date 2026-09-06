@@ -43,7 +43,7 @@ function renderAnswer(payload) {
 async function runQuery(query) {
   addMessage("user", query);
   const pending = document.createElement("div"); pending.className = "msg-row"; pending.innerHTML = `<div class="avatar">S</div><div class="thinking">Querying the canonical API pipeline...</div>`; chatMessages.appendChild(pending);
-  try { const response = await api("/query", { method: "POST", body: JSON.stringify({ query, user_id: "web-user", language: "en", require_citations: true }) }); pending.remove(); renderAnswer(response); }
+  try { const response = await api("/query", { method: "POST", body: JSON.stringify({ query, user_id: "web-user", language: "en", jurisdiction: $("jurisdictionMode").value, require_citations: true }) }); pending.remove(); renderAnswer(response); }
   catch (error) { pending.remove(); addMessage("assistant", `<strong>Request failed.</strong> ${escapeHtml(error.message)}`); }
 }
 $("sendBtn").addEventListener("click", () => { const query = chatInput.value.trim(); if (!query) return; chatInput.value = ""; runQuery(query); });

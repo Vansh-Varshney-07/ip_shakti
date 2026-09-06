@@ -827,6 +827,7 @@ async def upload_ingestion(
 async def query_with_upload(
     file: UploadFile = File(...),
     query_text: str = Form(..., min_length=1, max_length=10000),
+    jurisdiction: str = Form("INDIA"),
     user: CurrentUser = Depends(get_current_user),
     rag_pipeline: RAGPipeline = Depends(get_rag_pipeline),
     _rate_limit: None = Depends(rate_limit_dependency),
@@ -853,10 +854,14 @@ async def query_with_upload(
         raise HTTPException(status_code=422, detail="No readable text was found in the uploaded document")
 
     from ip_sakti.core.models import Query, QueryIntent
+    try:
+        selected_jurisdiction = JurisdictionCode(jurisdiction.upper())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="jurisdiction must be INDIA or INTERNATIONAL") from exc
     internal_query = Query(
         text=query_text,
         user_id=user.user_id,
-        jurisdiction=JurisdictionCode.INDIA,
+        jurisdiction=selected_jurisdiction,
         language=LanguageCode.EN,
         max_results=10,
         require_citations=True,
@@ -879,14 +884,14 @@ async def query_with_upload(
                 segments=[GeneratedSegment(text=context.generated_answer or "No answer generated", claims=[], citations=citation_models)],
                 citations=citation_models,
                 overall_confidence=context.confidence_score,
-                jurisdiction=JurisdictionCode.INDIA,
+                jurisdiction=selected_jurisdiction,
                 language=LanguageCode.EN,
                 processing_time_ms=int(context.metrics.get("total_time_ms", 0)),
                 retrieval_stats=context.metrics,
             ),
             retrieved_chunks=retrieved_models,
             intent=context.query.intent or QueryIntent.GENERAL_LEGAL,
-            jurisdiction=JurisdictionCode.INDIA,
+            jurisdiction=selected_jurisdiction,
             warnings=context.errors,
         ),
     )

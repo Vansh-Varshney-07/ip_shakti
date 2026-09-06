@@ -148,7 +148,7 @@ main{flex:1;overflow:hidden;display:flex;flex-direction:column;min-width:0;}
 .send-btn{width:32px;height:32px;border-radius:50%;border:none;background:var(--gold);color:var(--text);cursor:pointer;flex-shrink:0;font-size:13px;display:flex;align-items:center;justify-content:center;}
 .send-btn:hover{background:var(--gold);}
 #fileInput{display:none;}
-#fileMode{max-width:150px;border:1px solid var(--border);border-radius:var(--radius-control);background:var(--panel-2);color:var(--text-soft);font:11px 'IBM Plex Sans',sans-serif;padding:7px 6px;}
+#fileMode,#jurisdictionMode{max-width:150px;border:1px solid var(--border);border-radius:var(--radius-control);background:var(--panel-2);color:var(--text-soft);font:11px 'IBM Plex Sans',sans-serif;padding:7px 6px;}
 
 /* ================= FILES PAGE ================= */
 .files-toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;}
