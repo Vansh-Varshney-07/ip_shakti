@@ -847,39 +847,57 @@ class RAGPipeline:
         all_results = []
         # The positive pass deliberately uses semantic probes to cover the
         # formulation, IP, ABS, and procedure angles of a natural-language ask.
-        for variant in positive_variants:
-            request = SearchRequest(
+        positive_requests = [
+            SearchRequest(
                 query=variant,
                 strategy=RetrievalStrategy.SEMANTIC,
                 filters=jurisdiction_filter,
                 top_k=self.settings.rag_retrieval.get("positive_top_k", 4),
             )
-            response = await self.retrieval_engine.search(request)
+            for variant in positive_variants
+        ]
+        positive_responses = await asyncio.gather(*(
+            self.retrieval_engine.search(request) for request in positive_requests
+        ))
+        for response in positive_responses:
             all_results.extend(response.results)
 
         # Preserve exact legal-term recall with a small hybrid/keyword pass.
-        for variant in [context.original_query, *context.rewritten_queries[:2]]:
-            for strategy in strategies[:2]:
-                request = SearchRequest(
-                    query=variant,
-                    strategy=strategy,
-                    # Query analysis is advisory; do not discard authoritative
-                    # sources when the classifier returns an unnormalised value.
-                    filters=jurisdiction_filter,
-                    top_k=self.settings.rag_retrieval.get("top_k_per_variant", 20),
-                )
-                response = await self.retrieval_engine.search(request)
-                all_results.extend(response.results)
+        exact_requests = [
+            SearchRequest(
+                query=variant,
+                strategy=strategy,
+                # Query analysis is advisory; do not discard authoritative
+                # sources when the classifier returns an unnormalised value.
+                filters=jurisdiction_filter,
+                top_k=self.settings.rag_retrieval.get("top_k_per_variant", 20),
+            )
+            for variant in [context.original_query, *context.rewritten_queries[:2]]
+            for strategy in strategies[:2]
+        ]
+        exact_responses = await asyncio.gather(*(
+            self.retrieval_engine.search(request) for request in exact_requests
+        ))
+        for response in exact_responses:
+            all_results.extend(response.results)
 
-        negative_results = []
-        for variant in context.negative_queries:
-            response = await self.retrieval_engine.search(SearchRequest(
+        negative_requests = [
+            SearchRequest(
                 query=variant,
                 strategy=RetrievalStrategy.SEMANTIC,
                 filters=jurisdiction_filter,
                 top_k=self.settings.rag_retrieval.get("negative_top_k", 3),
-            ))
-            negative_results.extend(response.results)
+            )
+            for variant in context.negative_queries
+        ]
+        negative_responses = await asyncio.gather(*(
+            self.retrieval_engine.search(request) for request in negative_requests
+        ))
+        negative_results = [
+            result
+            for response in negative_responses
+            for result in response.results
+        ]
         context.negative_retrieval_results = negative_results
 
         negative_scores = {}
