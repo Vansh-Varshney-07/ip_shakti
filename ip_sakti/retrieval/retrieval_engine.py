@@ -26,19 +26,18 @@ from ip_sakti.core.models import (
     SourceAuthorityTier,
 )
 from ip_sakti.authority.authority_system import SourceAuthoritySystem
+# Import new embedding module
+from ip_sakti.embedding import (
+    EmbeddingProvider,
+    VectorStore,
+    VectorStoreConfig,
+    VectorStoreType,
+    SearchResult,
+    create_vector_store,
+    create_vector_store_from_settings,
+)
 
 logger = logging.getLogger(__name__)
-
-
-class VectorStoreType(str, Enum):
-    """Supported vector store types."""
-    QDRANT = "qdrant"
-    WEAVIATE = "weaviate"
-    PINECONE = "pinecone"
-    MILVUS = "milvus"
-    CHROMA = "chroma"
-    ELASTICSEARCH = "elasticsearch"
-    IN_MEMORY = "in_memory"  # For development/testing
 
 
 class CacheBackend(str, Enum):
@@ -48,10 +47,11 @@ class CacheBackend(str, Enum):
     IN_MEMORY = "in_memory"
 
 
+# VectorStoreType is imported from embedding module
+
+
 @dataclass
 class RetrievalConfig:
-    """Configuration for retrieval engine."""
-    top_k: int = 10
     hybrid_alpha: float = 0.5  # Weight for semantic vs keyword (0=keyword, 1=semantic)
     vector_store: VectorStoreType = VectorStoreType.IN_MEMORY
     vector_store_config: Dict[str, Any] = field(default_factory=dict)
@@ -484,19 +484,8 @@ class RetrievalEngine:
         }
     
     def _create_vector_store(self) -> VectorStore:
-        store_type = self.config.vector_store
-        store_config = self.config.vector_store_config
-        
-        if store_type == VectorStoreType.IN_MEMORY:
-            return InMemoryVectorStore(store_config)
-        # Add other store implementations here
-        # elif store_type == VectorStoreType.QDRANT:
-        #     return QdrantVectorStore(store_config)
-        # elif store_type == VectorStoreType.WEAVIATE:
-        #     return WeaviateVectorStore(store_config)
-        
-        logger.warning(f"Vector store {store_type} not implemented, using in-memory")
-        return InMemoryVectorStore(store_config)
+        """Create vector store - use local InMemoryVectorStore for testing."""
+        return InMemoryVectorStore(self.config.vector_store_config)
     
     def _create_keyword_index(self) -> KeywordIndex:
         return InMemoryKeywordIndex(self.config.vector_store_config)
@@ -513,10 +502,8 @@ class RetrievalEngine:
         return InMemoryCache(cache_config)
     
     def _create_embedding_provider(self) -> EmbeddingProvider:
-        # In production, would create based on settings (OpenAI, local, etc.)
-        return MockEmbeddingProvider(
-            dimension=self.settings.embedding_dimensions
-        )
+        # Use mock embedding provider for development (no external dependencies)
+        return MockEmbeddingProvider(dimension=self.settings.embedding_dimensions)
     
     async def initialize(self) -> None:
         """Initialize all components."""

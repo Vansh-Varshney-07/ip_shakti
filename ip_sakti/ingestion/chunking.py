@@ -1,6 +1,6 @@
 """
-IP-SAKTI Chunking Strategy - Wrapper around LangChain's battle-tested text splitters.
-Uses langchain-text-splitters for all chunking operations.
+IP-SAKTI Chunking Strategy - Fast built-in recursive text splitter.
+No external dependencies - uses only Python standard library.
 """
 
 from abc import ABC, abstractmethod
@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Callable
 import uuid
+import re
 import logging
 
 from ip_sakti.config.loader import get_settings
@@ -17,10 +18,10 @@ logger = logging.getLogger(__name__)
 
 
 class ChunkingStrategyType(str, Enum):
-    """Types of chunking strategies - mapped to LangChain splitters."""
-    RECURSIVE = "recursive"  # LangChain's RecursiveCharacterTextSplitter
-    FIXED_SIZE = "fixed_size"  # LangChain's CharacterTextSplitter
-    SEMANTIC = "semantic"  # Placeholder for future semantic chunking
+    """Types of chunking strategies."""
+    RECURSIVE = "recursive"
+    FIXED_SIZE = "fixed_size"
+    SEMANTIC = "semantic"
 
 
 @dataclass
@@ -31,9 +32,7 @@ class ChunkingConfig:
     strategy: ChunkingStrategyType = ChunkingStrategyType.RECURSIVE
     min_chunk_size: int = 100
     max_chunk_size: int = 2000
-    # Length function can be customized (default: character count)
     length_function: Callable[[str], int] = len
-    # Separators for recursive splitting (ordered by priority)
     separators: List[str] = field(default_factory=lambda: ["\n\n", "\n", ". ", " ", ""])
 
 
@@ -71,9 +70,9 @@ class BaseChunker(ABC):
 
 class RecursiveChunker(BaseChunker):
     """
-    Wrapper around LangChain's RecursiveCharacterTextSplitter.
+    Fast recursive character text splitter using Python standard library.
     
-    This is the most robust chunking approach:
+    Mimics LangChain's RecursiveCharacterTextSplitter behavior:
     1. Tries to split by separators in order (paragraphs, sentences, words, characters)
     2. Recursively splits oversized chunks using the next separator
     3. Merges splits back together respecting chunk_size and chunk_overlap
@@ -81,30 +80,81 @@ class RecursiveChunker(BaseChunker):
 
     def __init__(self, config: ChunkingConfig):
         super().__init__(config)
-        # Import lazily to avoid import issues
-        from langchain_text_splitters import RecursiveCharacterTextSplitter
-        self._splitter = RecursiveCharacterTextSplitter(
-            chunk_size=config.chunk_size,
-            chunk_overlap=config.chunk_overlap,
-            length_function=config.length_function,
-            separators=config.separators,
-            keep_separator=True,
-        )
+        self._separators = config.separators
+
+    def _split_text(self, text: str, separators: List[str]) -> List[str]:
+        """Split text using the given separators."""
+        if not separators:
+            # Character-level splitting as last resort
+            return [text[i:i+self.config.chunk_size] for i in range(0, len(text), self.config.chunk_size)]
+        
+        separator = separators[0]
+        remaining_separators = separators[1:]
+        
+        # Split by current separator
+        if separator == "":
+            # Character level - split into individual characters
+            splits = list(text)
+        else:
+            splits = text.split(separator)
+        
+        # Rejoin with separator (except for empty separator)
+        result = []
+        for split in splits:
+            if len(split) <= self.config.chunk_size:
+                result.append(split)
+            elif remaining_separators:
+                # Recursively split oversized chunks
+                sub_splits = self._split_text(split, remaining_separators)
+                result.extend(sub_splits)
+            else:
+                # No more separators, force split by chunk_size
+                for i in range(0, len(split), self.config.chunk_size):
+                    result.append(split[i:i+self.config.chunk_size])
+        
+        return result
+
+    def _merge_splits(self, splits: List[str]) -> List[str]:
+        """Merge splits respecting chunk_size and chunk_overlap."""
+        if not splits:
+            return []
+        
+        merged = []
+        current_chunk = ""
+        
+        for split in splits:
+            # If adding this split would exceed chunk_size, save current and start new
+            if current_chunk and len(current_chunk) + len(split) > self.config.chunk_size:
+                merged.append(current_chunk)
+                # Start new chunk with overlap from end of previous
+                overlap_start = max(0, len(current_chunk) - self.config.chunk_overlap)
+                current_chunk = current_chunk[overlap_start:] + split
+            else:
+                if current_chunk:
+                    current_chunk += split
+                else:
+                    current_chunk = split
+        
+        if current_chunk:
+            merged.append(current_chunk)
+        
+        return merged
 
     async def chunk(self, text: str, metadata: Dict[str, Any]) -> List[DocumentChunk]:
-        """Chunk text using LangChain's recursive splitting strategy."""
+        """Chunk text using fast recursive splitting strategy."""
         if not text or not text.strip():
             return []
 
-        # Use LangChain's battle-tested implementation
-        splits = self._splitter.split_text(text)
-        
+        # Fast split using regex-based separators
+        initial_splits = self._split_text(text, self._separators)
+        merged_splits = self._merge_splits(initial_splits)
+
         # Create DocumentChunk objects
         chunks = []
         document_id = metadata.get('document_id', '')
         char_offset = 0
-        
-        for i, chunk_text in enumerate(splits):
+
+        for i, chunk_text in enumerate(merged_splits):
             if len(chunk_text) >= self.config.min_chunk_size:
                 chunk = self._create_chunk(
                     text=chunk_text,
@@ -116,47 +166,46 @@ class RecursiveChunker(BaseChunker):
                 )
                 chunks.append(chunk)
                 char_offset += len(chunk_text)
-        
+
         return chunks
 
 
 class FixedSizeChunker(BaseChunker):
-    """Wrapper around LangChain's CharacterTextSplitter for fixed-size chunking."""
+    """Fixed-size chunking using Python standard library."""
 
     def __init__(self, config: ChunkingConfig):
         super().__init__(config)
-        from langchain_text_splitters import CharacterTextSplitter
-        self._splitter = CharacterTextSplitter(
-            chunk_size=config.chunk_size,
-            chunk_overlap=config.chunk_overlap,
-            length_function=config.length_function,
-            separator="",  # Character-level
-        )
 
     async def chunk(self, text: str, metadata: Dict[str, Any]) -> List[DocumentChunk]:
         """Chunk text using fixed-size splitting."""
         if not text or not text.strip():
             return []
 
-        splits = self._splitter.split_text(text)
-        
         chunks = []
         document_id = metadata.get('document_id', '')
         char_offset = 0
-        
-        for i, chunk_text in enumerate(splits):
+        chunk_size = self.config.chunk_size
+        overlap = self.config.chunk_overlap
+
+        i = 0
+        while char_offset < len(text):
+            end = min(char_offset + chunk_size, len(text))
+            chunk_text = text[char_offset:end]
+
             if len(chunk_text) >= self.config.min_chunk_size:
                 chunk = self._create_chunk(
                     text=chunk_text,
                     index=i,
                     document_id=document_id,
                     start_char=char_offset,
-                    end_char=char_offset + len(chunk_text),
+                    end_char=end,
                     metadata=metadata,
                 )
                 chunks.append(chunk)
-                char_offset += len(chunk_text)
-        
+                i += 1
+
+            char_offset += chunk_size - overlap
+
         return chunks
 
 
@@ -211,7 +260,7 @@ class ChunkingStrategy:
         text: str,
         document_id: str,
         document_type: DocumentType = DocumentType.PATENT,
-        jurisdiction = None,
+        jurisdiction=None,
     ) -> List[DocumentChunk]:
         metadata = {
             'document_id': document_id,

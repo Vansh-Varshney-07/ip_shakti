@@ -161,6 +161,9 @@ class Settings:
     observability_tracing: Dict[str, Any] = field(default_factory=dict)
     observability_alerting: Dict[str, Any] = field(default_factory=dict)
     
+    # Module selection configuration (Phase 1.5)
+    modules: Dict[str, Any] = field(default_factory=dict)
+    
     def __post_init__(self):
         self._apply_env_overrides()
     
@@ -347,6 +350,9 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
     settings.observability_metrics = obs.get("metrics", {})
     settings.observability_tracing = obs.get("tracing", {})
     settings.observability_alerting = obs.get("alerting", {})
+    
+    # Module selection (Phase 1.5)
+    settings.modules = config.get("modules", {})
     
     return settings
 

@@ -26,6 +26,11 @@ from ip_sakti.orchestration.engine import (
     create_orchestration_engine,
 )
 
+from ip_sakti.orchestration.pipeline_orchestrator import (
+    PipelineOrchestrator,
+    create_pipeline_orchestrator,
+)
+
 __all__ = [
     "OrchestrationEngine",
     "BaseAgent",
@@ -50,4 +55,6 @@ __all__ = [
     "DEFAULT_AGENT_CONFIGS",
     "AGENT_REGISTRY",
     "create_orchestration_engine",
+    "PipelineOrchestrator",
+    "create_pipeline_orchestrator",
 ]

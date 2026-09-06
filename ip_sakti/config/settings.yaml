@@ -30,7 +30,7 @@ technology:
   
   # Vector Database
   vector_db:
-    type: "qdrant"
+    type: "in_memory"
     host: "localhost"
     port: 6333
     collection: "ip_sakti_chunks"
@@ -77,6 +77,149 @@ technology:
     host: "localhost"
     port: 6379
     db: 1
+
+# ==========================================
+# MODULE SELECTION (Phase 1.5 - Configuration-Driven Module Selection)
+# ==========================================
+modules:
+  # Document Loading
+  document_loader:
+    default: "multipart"
+    fallback: "pdfplumber"
+    enabled: ["multipart", "pdfplumber", "pymupdf", "unstructured"]
+  
+  # Chunking
+  chunker:
+    default: "recursive"
+    fallback: "semantic"
+    enabled: ["recursive", "semantic", "token_based", "structure_aware"]
+    recursive:
+      chunk_size: 1000
+      chunk_overlap: 200
+    semantic:
+      similarity_threshold: 0.7
+      max_chunk_size: 1500
+    token_based:
+      tokens_per_chunk: 512
+      overlap_tokens: 50
+    structure_aware:
+      preserve_headings: true
+      preserve_tables: true
+  
+  # Embedding
+  embedder:
+    default: "sentence_transformer"
+    fallback: "openai"
+    enabled: ["sentence_transformer", "openai", "huggingface", "custom"]
+    sentence_transformer:
+      model_name: "BAAI/bge-m3"
+      device: "auto"
+      normalize: true
+    openai:
+      model_name: "text-embedding-3-large"
+      api_key_env: "OPENAI_API_KEY"
+  
+  # Vector Store
+  vector_store:
+    default: "qdrant"
+    fallback: "in_memory"
+    enabled: ["qdrant", "in_memory", "chromadb", "faiss", "pinecone", "weaviate"]
+    qdrant:
+      host: "localhost"
+      port: 6333
+      collection: "ip_sakti_chunks"
+    in_memory:
+      max_vectors: 1000000
+  
+  # Authority System
+  authority_system:
+    default: "tier_based"
+    fallback: "simple_weight"
+    enabled: ["tier_based", "simple_weight", "hierarchical", "custom"]
+    tier_based:
+      use_jurisdiction_boost: true
+      use_recency_boost: true
+      binding_boost: 1.1
+  
+  # Retrieval
+  retriever:
+    default: "hybrid"
+    fallback: "vector"
+    enabled: ["hybrid", "vector", "lexical", "hybrid_rrf", "hybrid_weighted"]
+    hybrid:
+      vector_weight: 0.6
+      lexical_weight: 0.4
+      rrf_k: 60
+    hybrid_rrf:
+      rrf_k: 60
+    hybrid_weighted:
+      vector_weight: 0.6
+      lexical_weight: 0.4
+  
+  # Reranking
+  reranker:
+    default: "cross_encoder"
+    fallback: "none"
+    enabled: ["cross_encoder", "none", "llm_rerank", "colbert", "bge_rerank"]
+    cross_encoder:
+      model_name: "BAAI/bge-reranker-v2-m3"
+      top_k: 100
+      batch_size: 16
+  
+  # Generation
+  generator:
+    default: "openai"
+    fallback: "openai_mini"
+    enabled: ["openai", "openai_mini", "anthropic", "local", "vllm", "ollama"]
+    openai:
+      model: "gpt-4o"
+      temperature: 0.1
+      max_tokens: 4096
+      top_p: 0.9
+    openai_mini:
+      model: "gpt-4o-mini"
+      temperature: 0.1
+      max_tokens: 4096
+    anthropic:
+      model: "claude-3-5-sonnet"
+      temperature: 0.1
+      max_tokens: 4096
+  
+  # Query Processing
+  query_processor:
+    default: "composite"
+    fallback: "simple"
+    enabled: ["composite", "simple", "advanced"]
+    composite:
+      analyzer_enabled: true
+      rewriter_enabled: true
+      router_enabled: true
+    simple:
+      analyzer_enabled: false
+      rewriter_enabled: false
+      router_enabled: false
+  
+  # Knowledge Graph
+  knowledge_graph:
+    default: "neo4j"
+    fallback: "in_memory"
+    enabled: ["neo4j", "in_memory", "rdflib", "networkx"]
+    neo4j:
+      host: "localhost"
+      port: 7687
+      database: "neo4j"
+      username: "neo4j"
+  
+  # Pipeline Orchestrator
+  pipeline_orchestrator:
+    default: "async"
+    fallback: "sync"
+    enabled: ["async", "sync", "streaming"]
+    async:
+      max_concurrent_stages: 5
+      stage_timeout: 30
+    sync:
+      stage_timeout: 60
 
 # ==========================================
 # AUTHORITY TIERS (Phase 5 - Source Authority)

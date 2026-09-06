@@ -18,7 +18,17 @@ from ip_sakti.generation.citation_first import (
     create_citation_generator,
 )
 
+from ip_sakti.generation.strategies.citation_generator import (
+    GenerationStrategy,
+    GenerationConfig,
+    GeneratedAnswer,
+    BaseGenerator,
+    StructuredGenerator,
+    GeneratorFactory,
+)
+
 __all__ = [
+    # Original citation_first exports
     "CitationFirstGenerator",
     "LegalCitationGenerator",
     "PatentCitationGenerator",
@@ -32,4 +42,11 @@ __all__ = [
     "CitationVerifier",
     "ClaimExtractor",
     "create_citation_generator",
+    # New strategy exports
+    "GenerationStrategy",
+    "GenerationConfig",
+    "GeneratedAnswer",
+    "BaseGenerator",
+    "StructuredGenerator",
+    "GeneratorFactory",
 ]
