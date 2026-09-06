@@ -600,6 +600,10 @@ class RetrievalEngine:
         from ip_sakti.kg.knowledge_graph import KnowledgeGraph
         self.knowledge_graph = KnowledgeGraph(settings=self.settings)
         await self.knowledge_graph.initialize()
+        # Rehydrate the local graph from the persisted corpus so graph
+        # retrieval remains available after an API restart.
+        if persisted_chunks:
+            await self.knowledge_graph.ingest_chunks(persisted_chunks)
         logger.info("Retrieval engine initialized")
     
     async def index_chunks(self, chunks: List[DocumentChunk]) -> None:

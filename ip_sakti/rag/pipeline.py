@@ -655,6 +655,7 @@ Answering requirements:
 - For an Ayurvedic, herbal, chemical, food, cosmetic, or drug product, distinguish classical medicine, proprietary/patent medicine, new/non-classical drug, phytopharmaceutical, Ayurveda-Aahar/nutraceutical, and cosmetic possibilities when relevant.
 - Explain the likely applicable Indian regimes and competent next step separately from any international/export regime.
 - Provide a practical numbered workflow, likely records/forms/evidence, IP options, ABS/TK implications, and risks or exclusions when the evidence supports them.
+- Respond in the requested language ({context.query.language.value}); preserve statute, treaty, registry, and citation names in their authoritative form.
 - Cite material claims with [1], [2], etc. Do not cite a source that does not support the claim.
 - State that this is information and not legal, medical, or regulatory advice.
 
@@ -880,6 +881,17 @@ class RAGPipeline:
         ))
         for response in exact_responses:
             all_results.extend(response.results)
+
+        # Graph evidence adds local multi-hop/entity support without replacing
+        # the citation-grounded semantic and lexical retrieval passes.
+        graph_response = await self.retrieval_engine.search(SearchRequest(
+            query=context.original_query,
+            strategy=RetrievalStrategy.GRAPH,
+            filters=jurisdiction_filter,
+            top_k=self.settings.rag_retrieval.get("graph_top_k", 5),
+        ))
+        all_results.extend(graph_response.results)
+        context.metrics['graph_searches'] = 1
 
         negative_requests = [
             SearchRequest(

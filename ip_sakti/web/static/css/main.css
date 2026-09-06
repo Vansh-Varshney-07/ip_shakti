@@ -149,6 +149,8 @@ main{flex:1;overflow:hidden;display:flex;flex-direction:column;min-width:0;}
 .send-btn:hover{background:var(--gold);}
 #fileInput{display:none;}
 #fileMode,#jurisdictionMode{max-width:150px;border:1px solid var(--border);border-radius:var(--radius-control);background:var(--panel-2);color:var(--text-soft);font:11px 'IBM Plex Sans',sans-serif;padding:7px 6px;}
+.support-btn{border:1px solid var(--border-strong);border-radius:var(--radius-control);background:var(--sage-dim);color:var(--text);font:11px 'IBM Plex Sans',sans-serif;padding:7px 9px;cursor:pointer;white-space:nowrap;}
+.support-btn:hover{background:var(--sage);}
 
 /* ================= FILES PAGE ================= */
 .files-toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;}

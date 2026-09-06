@@ -42,15 +42,17 @@ ip_sakti/
 - **Biodiversity/ABS**: CBD, Nagoya Protocol, NBA compliance
 - **Formulation triage**: natural-language product facts are routed through classification, procedure, compliance, IP, TK, and ABS retrieval angles rather than requiring an Act number.
 - **Contrastive retrieval**: 24 positive semantic probes plus 3 negative/exclusion probes are fused before reranking; negative matches receive a configurable penalty.
+- **Graph-assisted retrieval**: the local NetworkX knowledge graph is rehydrated from the persisted corpus and contributes entity evidence alongside semantic and lexical retrieval.
 
 ### Production Ready
 - **Configuration-Driven**: YAML-based module selection with fallbacks
 - **Observability**: Prometheus metrics, structured logging, health checks
 - **Caching**: Redis-backed with TTL and invalidation
-- **Multilingual**: Hindi/English with Indic language support
+- **Multilingual**: Hindi/English response routing is enabled locally; authoritative names and citation markers are preserved.
 - **Evaluation**: RAGAS, Faithfulness, Answer Relevancy, Context Precision
 - **Live telemetry**: dashboard metrics and pipeline graph reflect completed queries in the current API process.
 - **Document modes**: uploaded PDFs can either enter the persistent ingestion/indexing pipeline or be used as ephemeral prompt context for one query.
+- **Facilitator escalation**: authenticated review requests are queued locally and written to a privacy-conscious audit JSONL stream; no external ticketing service is required.
 
 ## Quick Start
 
@@ -145,6 +147,7 @@ The checked-in runtime configuration uses `sentence-transformers/all-MiniLM-L6-v
 | `/auth/token` | POST | Obtain a local JWT for the web client |
 | `/query` | POST | Authenticated grounded RAG query |
 | `/query/upload` | POST | Ask with a PDF as ephemeral prompt context |
+| `/escalations` | POST | Queue a local human-facilitator review request |
 | `/ingest/upload` | POST | Authenticated upload into the persistent corpus |
 | `/documents` | GET | Indexed document summaries |
 | `/dashboard/metrics` | GET | Corpus and live query telemetry |

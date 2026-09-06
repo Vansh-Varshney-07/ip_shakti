@@ -28,6 +28,8 @@ const api = async (path, options = {}) => {
 const $ = id => document.getElementById(id);
 const chatMessages = $("chatMessages");
 const chatInput = $("chatInput");
+let lastQuery = "";
+let lastQueryId = null;
 function escapeHtml(value) { return String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
 function addMessage(kind, html) {
   const row = document.createElement("div"); row.className = `msg-row ${kind === "user" ? "user" : ""}`;
@@ -38,9 +40,13 @@ function renderAnswer(payload) {
   const answer = payload.data?.answer || {}; const citations = answer.citations || [];
   const text = (answer.segments || []).map(segment => segment.text).join("\n") || "No answer returned.";
   const sources = citations.length ? citations.map((citation, i) => `[${i + 1}] ${escapeHtml(citation.legal_citation)} &middot; ${escapeHtml(citation.source_reference.source_name)}`).join("<br>") : "No verified citations were returned.";
-  addMessage("assistant", `${escapeHtml(text).replace(/\n/g, "<br>")}<div class="src-line">${sources}</div>`);
+  lastQueryId = payload.data?.query_id || null;
+  const confidence = Number(answer.overall_confidence || 0);
+  const confidenceLabel = confidence ? `${Math.round(confidence * 100)}% grounded confidence` : "Confidence unavailable";
+  addMessage("assistant", `${escapeHtml(text).replace(/\n/g, "<br>")}<div class="src-line">${sources}</div><div class="answer-meta">${escapeHtml(confidenceLabel)} · Information only, not legal, medical, or regulatory advice.</div>`);
 }
 async function runQuery(query) {
+  lastQuery = query;
   addMessage("user", query);
   const pending = document.createElement("div"); pending.className = "msg-row"; pending.innerHTML = `<div class="avatar">S</div><div class="thinking">Querying the canonical API pipeline...</div>`; chatMessages.appendChild(pending);
   try { const response = await api("/query", { method: "POST", body: JSON.stringify({ query, user_id: "web-user", language: "en", jurisdiction: $("jurisdictionMode").value, require_citations: true }) }); pending.remove(); renderAnswer(response); }
@@ -48,6 +54,16 @@ async function runQuery(query) {
 }
 $("sendBtn").addEventListener("click", () => { const query = chatInput.value.trim(); if (!query) return; chatInput.value = ""; runQuery(query); });
 chatInput.addEventListener("keydown", event => { if (event.key === "Enter") $("sendBtn").click(); });
+$("escalateBtn").addEventListener("click", async () => {
+  const query = lastQuery || chatInput.value.trim();
+  if (!query) { addMessage("assistant", "Ask a question first so the facilitator has a review context."); return; }
+  const reason = window.prompt("What should the human IP facilitator review?", "I need help validating the classification, sources, or next procedure.");
+  if (!reason) return;
+  try {
+    const response = await api("/escalations", { method: "POST", body: JSON.stringify({ query, reason, user_id: "web-user", query_id: lastQueryId, jurisdiction: $("jurisdictionMode").value }) });
+    addMessage("assistant", `<strong>Review queued.</strong> ${escapeHtml(response.message)}<div class="src-line">Reference: ${escapeHtml(response.escalation_id)}</div>`);
+  } catch (error) { addMessage("assistant", `<strong>Review request failed.</strong> ${escapeHtml(error.message)}`); }
+});
 
 let kbDocuments = [];
 const dashboardCharts = {};

@@ -412,7 +412,7 @@ ingestion:
     overlap_ratio: 0.15
     definition_boost: 2.0
     table_chunk_separately: true
-    multilingual_enabled: false
+    multilingual_enabled: true
   
   deduplication:
     exact_hash: true

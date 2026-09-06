@@ -257,6 +257,23 @@ class QueryResponse(BaseModel):
     request_id: str = Field(default_factory=lambda: str(uuid4()))
 
 
+class EscalationRequest(BaseModel):
+    """Request a local human-facilitator review without external services."""
+    query: str = Field(..., min_length=1, max_length=10000)
+    reason: str = Field(..., min_length=5, max_length=2000)
+    user_id: str = Field(..., min_length=1, max_length=200)
+    query_id: Optional[str] = Field(None, max_length=100)
+    jurisdiction: JurisdictionCode = JurisdictionCode.INDIA
+
+
+class EscalationResponse(BaseModel):
+    """Acknowledgement for a locally queued facilitator review."""
+    success: bool = True
+    escalation_id: str
+    status: str = "queued"
+    message: str
+
+
 class BatchQueryRequest(BaseModel):
     """Batch query request."""
     queries: List[QueryRequest] = Field(..., min_length=1, max_length=100, description="List of queries")

@@ -6,6 +6,8 @@ Phase 18: API Architecture - Complete FastAPI app with all endpoints.
 from __future__ import annotations
 import logging
 import os
+import hashlib
+import json
 import time
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -63,6 +65,8 @@ from ip_sakti.api.models import (
     RetrievedChunk,
     DocumentChunkDetail,
     Claim,
+    EscalationRequest,
+    EscalationResponse,
 )
 from ip_sakti.api.auth import (
     CurrentUser,
@@ -102,6 +106,21 @@ _jwt_manager: Optional[JWTManager] = None
 _api_key_manager: Optional[APIKeyManager] = None
 _rate_limiter: Optional[RateLimiter] = None
 _ingestion_jobs: Dict[str, Dict[str, Any]] = {}
+_escalations: Dict[str, Dict[str, Any]] = {}
+
+
+def _write_audit_event(event_type: str, user_id: str, **details: Any) -> None:
+    """Write privacy-conscious local audit records without storing raw queries."""
+    audit_dir = Path(__file__).resolve().parents[2] / "data" / "runtime" / "audit"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    event = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "event": event_type,
+        "user_id_hash": hashlib.sha256(user_id.encode()).hexdigest()[:16],
+        **details,
+    }
+    with (audit_dir / "events.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event, sort_keys=True) + "\n")
 
 
 def _api_authority_tier(value: Any) -> AuthorityTier:
@@ -476,6 +495,16 @@ async def query(
 
     # Run RAG pipeline
     context = await rag_pipeline.run(query)
+    _write_audit_event(
+        "query_completed" if not context.errors else "query_failed",
+        request.user_id,
+        query_id=str(context.query.query_id),
+        jurisdiction=(request.jurisdiction or JurisdictionCode.INDIA).value,
+        intent=(context.query.intent or QueryIntent.GENERAL_LEGAL).value,
+        citations=len(context.citations),
+        confidence=round(float(context.confidence_score), 4),
+        processing_time_ms=int(context.metrics.get("total_time_ms", 0)),
+    )
 
     if context.errors:
         return QueryResponse(
@@ -528,6 +557,38 @@ async def query(
             jurisdiction=request.jurisdiction or JurisdictionCode.INDIA,
             warnings=context.errors,
         ),
+    )
+
+
+@app.post("/escalations", response_model=EscalationResponse, tags=["Support"])
+async def create_escalation(
+    request: EscalationRequest,
+    user: CurrentUser = Depends(get_current_user),
+    _rate_limit: None = Depends(rate_limit_dependency),
+):
+    """Queue a facilitator review in the local audit-backed review queue."""
+    escalation_id = f"esc_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{os.urandom(4).hex()}"
+    record = {
+        "escalation_id": escalation_id,
+        "status": "queued",
+        "created_at": datetime.utcnow().isoformat(),
+        "user_id": request.user_id,
+        "query_id": request.query_id,
+        "jurisdiction": request.jurisdiction.value,
+        "query": request.query,
+        "reason": request.reason,
+    }
+    _escalations[escalation_id] = record
+    _write_audit_event(
+        "facilitator_escalation_created",
+        request.user_id,
+        escalation_id=escalation_id,
+        query_id=request.query_id,
+        jurisdiction=request.jurisdiction.value,
+    )
+    return EscalationResponse(
+        escalation_id=escalation_id,
+        message="Your review request has been queued for a human IP facilitator.",
     )
 
 
