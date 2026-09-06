@@ -101,6 +101,11 @@ record = {
     "jurisdiction_returned": data.get("jurisdiction"),
     "retrieved_count": len(data.get("retrieved_chunks") or []),
     "citation_count": len(answer.get("citations") or []),
+    "answer_text": "\n".join(segment.get("text", "") for segment in answer.get("segments") or []),
+    "citation_sources": [
+        (citation.get("source_reference") or {}).get("source_name")
+        for citation in answer.get("citations") or []
+    ],
     "confidence": answer.get("overall_confidence", 0),
     "positive_semantic_searches": stats.get("positive_semantic_searches", 0),
     "negative_semantic_searches": stats.get("negative_semantic_searches", 0),
