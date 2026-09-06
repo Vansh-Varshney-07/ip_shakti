@@ -616,6 +616,10 @@ class LLMGenerator(Generator):
             response.raise_for_status()
             payload = response.json()
         answer = payload["choices"][0]["message"]["content"].strip()
+        # NVIDIA-hosted models sometimes emit CJK or full-width citation
+        # brackets even when the prompt requests [n]. Normalize at the
+        # boundary so validation and the UI use one stable citation syntax.
+        answer = re.sub(r"[【［]\s*(\d+)\s*[】］]", r"[\1]", answer)
         cited = set(int(value) for value in re.findall(r"\[(\d+)\]", answer))
         confidence = min(0.95, 0.55 + 0.1 * len(cited))
         return answer, confidence
