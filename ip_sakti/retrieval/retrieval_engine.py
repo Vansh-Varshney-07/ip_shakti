@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import sqlite3
+import threading
 import time
 import uuid
 from abc import ABC, abstractmethod
@@ -540,6 +541,11 @@ class RetrievalEngine:
         
         # Authority system for filtering
         self.authority_system = SourceAuthoritySystem(self.settings)
+
+        # Keep dashboard query counts across API restarts without retaining
+        # raw user prompts. Test-mode processes deliberately stay ephemeral.
+        self._telemetry_path = Path(self.settings.index_path).with_name("query_telemetry.json")
+        self._telemetry_lock = threading.Lock()
         
         # Semaphore for concurrency control
         self._semaphore = asyncio.Semaphore(config.max_concurrent_searches)
@@ -550,7 +556,58 @@ class RetrievalEngine:
             'cache_hits': 0,
             'cache_misses': 0,
             'errors': 0,
+            'query_telemetry': self._load_query_telemetry(),
         }
+
+    @staticmethod
+    def _empty_query_telemetry() -> Dict[str, Any]:
+        return {
+            "completed": 0,
+            "cited": 0,
+            "abstained": 0,
+            "categories": {},
+            "jurisdictions": {},
+            "latency_ms": {},
+        }
+
+    def _load_query_telemetry(self) -> Dict[str, Any]:
+        """Load aggregate dashboard telemetry, tolerating missing/corrupt files."""
+        telemetry = self._empty_query_telemetry()
+        if self.settings.test_mode or not self._telemetry_path.exists():
+            return telemetry
+        try:
+            saved = json.loads(self._telemetry_path.read_text(encoding="utf-8"))
+            if not isinstance(saved, dict):
+                return telemetry
+            for key in ("completed", "cited", "abstained"):
+                if isinstance(saved.get(key), int) and saved[key] >= 0:
+                    telemetry[key] = saved[key]
+            for key in ("categories", "jurisdictions", "latency_ms"):
+                if isinstance(saved.get(key), dict):
+                    telemetry[key] = saved[key]
+        except (OSError, ValueError, TypeError) as exc:
+            logger.warning("Unable to load query telemetry from %s: %s", self._telemetry_path, exc)
+        return telemetry
+
+    def persist_query_telemetry(self) -> None:
+        """Atomically persist aggregate telemetry for the live dashboard."""
+        if self.settings.test_mode:
+            return
+        self._telemetry_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._telemetry_lock:
+            temp_path = self._telemetry_path.with_suffix(".json.tmp")
+            try:
+                temp_path.write_text(
+                    json.dumps(self.stats.get("query_telemetry", self._empty_query_telemetry()), indent=2),
+                    encoding="utf-8",
+                )
+                os.replace(temp_path, self._telemetry_path)
+            except OSError as exc:
+                logger.warning("Unable to persist query telemetry to %s: %s", self._telemetry_path, exc)
+                try:
+                    temp_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
     
     def _create_vector_store(self) -> VectorStore:
         """Use SQLite persistence in normal mode and memory only in explicit test mode."""

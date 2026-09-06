@@ -825,6 +825,10 @@ class RAGPipeline:
             for key, value in context.metrics.items():
                 if key.endswith("_time_ms"):
                     telemetry["latency_ms"][key] = round(float(value), 2)
+
+            # Persist only aggregate counters; raw prompts and generated text
+            # remain outside the dashboard telemetry store.
+            self.retrieval_engine.persist_query_telemetry()
             
         except Exception as e:
             logger.exception("RAG pipeline failed")
