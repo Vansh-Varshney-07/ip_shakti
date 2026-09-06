@@ -1,0 +1,1066 @@
+IP-SAKTI SAHAYAK
+PROJECT ARCHITECTURE, RAG EXPLANATION, CODE WALKTHROUGH, AND DESIGN TRADE-OFFS
+==========================================================================
+
+Purpose
+-------
+This document explains the project from startup to answer generation. It is
+written for a developer or evaluator who wants to understand what is actually
+running, why each major part exists, which libraries are used, which parts are
+custom, and what alternatives could replace them.
+
+The most important distinction is this:
+
+  The repository contains a broad, modular architecture with interfaces and
+  future extension points. The canonical local runtime is narrower and is the
+  path used by the web application and the evaluation scripts.
+
+The canonical runtime is:
+
+  Browser HTML/CSS/JavaScript
+      -> FastAPI REST API
+      -> authenticated query/upload handling
+      -> RAGPipeline
+      -> query analysis and semantic probe generation
+      -> hybrid lexical + dense retrieval plus graph evidence
+      -> authority-weighted reranking
+      -> context and citation construction
+      -> NVIDIA NIM generation in production mode
+      -> citation validation and JSON response
+
+The relevant implementation is concentrated in:
+
+  ip_sakti/web/index.html
+  ip_sakti/web/static/css/main.css
+  ip_sakti/web/static/js/app.js
+  ip_sakti/api/app.py
+  ip_sakti/api/auth.py
+  ip_sakti/rag/pipeline.py
+  ip_sakti/ingestion/pipeline.py
+  ip_sakti/ingestion/chunking.py
+  ip_sakti/ingestion/loaders.py
+  ip_sakti/retrieval/retrieval_engine.py
+  ip_sakti/authority/authority_system.py
+  ip_sakti/config/settings.yaml
+
+
+1. What problem the project solves
+-----------------------------------
+IP-SAKTI Sahayak is a legal-research assistant for Indian intellectual
+property, Ayurveda, traditional knowledge, biodiversity, Access and Benefit
+Sharing, and related international regimes.
+
+The user is not expected to ask only a narrow question such as "What is Act
+No. X?" A realistic question may describe a product, its plants or chemicals,
+its manufacturing method, its proposed claims, and a planned market. The
+system therefore tries to do four things together:
+
+  1. Understand the user's practical goal.
+  2. Retrieve authoritative passages from multiple legal regimes.
+  3. Produce an answer tied to those passages with numbered citations.
+  4. Abstain or state uncertainty when the corpus does not support a claim.
+
+This is information retrieval and research assistance, not a substitute for a
+qualified lawyer, regulatory consultant, patent agent, or medical professional.
+The generation prompt and UI carry that limitation explicitly.
+
+
+2. What RAG means
+-----------------
+RAG means Retrieval-Augmented Generation.
+
+An ordinary language model answers from patterns learned during training. That
+can be useful for general language, but it is risky for legal work because:
+
+  - laws change;
+  - legal wording is precise;
+  - a model can invent a section, form, deadline, or authority;
+  - jurisdiction matters;
+  - a confident answer can be wrong even when it sounds plausible.
+
+RAG adds a retrieval step before generation:
+
+  user question
+      -> search indexed source passages
+      -> select and rank evidence
+      -> place evidence in a prompt
+      -> ask the model to answer only from that evidence
+      -> validate citations and output
+
+The model is still generating prose, but the factual/legal material is
+intended to come from the retrieved corpus. This makes the answer more
+traceable and gives the application a place to update law: re-ingest a new
+version of a source instead of retraining the language model.
+
+RAG is not automatically factual. It can fail when the corpus is incomplete,
+the query retrieves the wrong passage, the source metadata is wrong, or the
+generator overstates the evidence. That is why this project includes hybrid
+retrieval, authority weighting, negative probes, citation validation,
+jurisdiction handling, audit events, and an abstention-oriented prompt.
+
+
+3. How to run the two local modes
+----------------------------------
+Production-like mode, port 8000:
+
+  IP_SAKTI_TEST_MODE=false
+  python -m uvicorn ip_sakti.api.app:app --host 127.0.0.1 --port 8000
+
+This mode uses the configured persistent SQLite vector store, local
+Sentence-Transformers embeddings, and NVIDIA NIM generation. The NVIDIA key
+is read from the ignored .env through the environment; it must never be
+committed to Git or written into source code.
+
+Test mode, port 8001:
+
+  IP_SAKTI_TEST_MODE=true
+  python -m uvicorn ip_sakti.api.app:app --host 127.0.0.1 --port 8001
+
+This mode uses an in-memory vector store, deterministic mock embeddings, and a
+deterministic extractive answer. It is fast, repeatable, and safe for tests,
+but it is not the same as measuring production model quality. The full corpus
+must be re-ingested after an 8001 restart because its vectors live in memory.
+
+The current 8001 test corpus was loaded through the normal /ingest/batch
+endpoint and contains 23 corpus inputs and 2,299 chunks. That is a runtime
+state, not a committed database snapshot.
+
+
+4. Frontend: language, framework, and behavior
+-----------------------------------------------
+The frontend is written in:
+
+  - HTML for structure;
+  - CSS for layout, palette, graph styling, and responsive surfaces;
+  - vanilla JavaScript for state, API calls, rendering, and interaction.
+
+There is no React, Vue, Angular, Next.js, or other frontend framework. The
+backend serves the web app from /web. The main files are:
+
+  ip_sakti/web/index.html
+  ip_sakti/web/static/css/main.css
+  ip_sakti/web/static/js/app.js
+
+This was chosen because the interface is a single dashboard-style application
+with limited build tooling. Vanilla JavaScript keeps deployment simple: the
+same FastAPI process serves the API and the static UI, with no Node build step.
+
+The frontend obtains a local JWT using /auth/token, stores it in
+localStorage, and uses the token for protected calls. It calls:
+
+  /query                 chat questions
+  /query/upload          temporary PDF prompt context
+  /ingest/upload         PDF/document indexing
+  /documents             files page
+  /dashboard/metrics     dashboard counters and charts
+  /health                pipeline health and node status
+  /escalations           local human-review queue
+
+The pipeline graph is a real HTML/SVG visualization, not a screenshot. It has
+explicit source-to-ingest-to-index-to-reason-to-serve edges, zoom controls,
+wheel zoom, pointer panning, node selection, and health data from /health.
+The graph is a view of the canonical application stages, not a distributed
+tracing topology.
+
+
+5. Startup and dependency wiring
+--------------------------------
+The FastAPI application is in ip_sakti/api/app.py.
+
+At startup it initializes shared components including:
+
+  - Settings from YAML and environment variables;
+  - RetrievalEngine;
+  - RAGPipeline;
+  - ingestion pipeline;
+  - authority system;
+  - JWT/API-key managers;
+  - generation readiness metadata.
+
+The dependency functions in app.py return those shared components to request
+handlers. This avoids constructing a new model/index for every request.
+
+Settings are loaded by ip_sakti/config/loader.py. Environment variables can
+override important values such as:
+
+  IP_SAKTI_TEST_MODE
+  IP_SAKTI_CORPUS_ROOT
+  IP_SAKTI_INDEX_PATH
+  NVIDIA_API_KEY
+
+The YAML file describes a wider selection of technologies, but the loader and
+the concrete classes determine what the local runtime actually instantiates.
+Always verify both settings.yaml and the implementation before assuming that a
+listed external service is connected.
+
+
+6. Ingestion: how a source becomes searchable
+----------------------------------------------
+The ingestion entry point is IngestionPipeline in
+ip_sakti/ingestion/pipeline.py. The high-level stages are:
+
+  FETCH -> VALIDATE -> EXTRACT -> CHUNK -> ENRICH -> INDEX -> COMPLETE
+
+6.1 Fetch
+----------
+The source can be a local path, a URL, or raw content. Local files are checked
+against allowed ingestion paths. URL fetching checks allowed domains and size
+limits. This prevents the API from becoming an unrestricted file reader or
+server-side fetch proxy.
+
+6.2 Validate
+------------
+The pipeline checks that content exists, detects MIME type, applies document
+validators, checks suspicious/malicious content, and verifies source metadata.
+PDF signature checks are deliberately important because a file named .pdf is
+not necessarily a valid PDF.
+
+6.3 Extract
+-----------
+ip_sakti/ingestion/loaders.py selects a loader by extension. The project can
+use text, PDF, HTML, Markdown, XML, DOCX, and fallback loaders. PDF extraction
+uses the installed PDF tooling where available and has fallback behavior.
+
+6.4 Chunk
+---------
+Long documents are split into DocumentChunk objects. The active default path
+uses a recursive character splitter in ip_sakti/ingestion/chunking.py:
+
+  - try paragraph boundaries;
+  - then line boundaries;
+  - then sentence/word boundaries;
+  - finally split at character level if necessary;
+  - merge pieces up to chunk_size;
+  - preserve chunk_overlap from the previous chunk;
+  - discard chunks below min_chunk_size.
+
+The default loader properties currently fall back to a chunk size of 512
+characters and 50 characters of overlap unless the ingestion.chunking settings
+override them. The larger module-selection values in YAML are not automatically
+the effective values; the Settings property is the source of truth.
+
+Why overlap exists: legal provisions can start at the end of one chunk and
+continue into the next. Overlap reduces boundary loss. Too much overlap raises
+index size and duplicate evidence, so it is a recall/latency/storage trade-off.
+
+The semantic chunker class currently falls back to recursive chunking. It is a
+valid extension point, not a fully independent embedding-based chunker yet.
+
+6.5 Enrich
+----------
+Metadata is attached to each chunk: document ID, source path/name, document
+type, jurisdiction, authority tier, section information when available,
+content hash, and provenance fields. Authority scores are propagated from the
+source to the chunk.
+
+6.6 Index
+---------
+Each chunk is inserted into:
+
+  1. vector store, for dense semantic search;
+  2. keyword index, for BM25-like lexical search;
+  3. local NetworkX graph, where graph ingestion is enabled.
+
+Production-like local mode persists chunks and vectors in
+data/runtime/ip_sakti_index.sqlite3. Test mode stores them in dictionaries in
+memory.
+
+
+7. Embeddings: what they are and why they are used
+--------------------------------------------------
+An embedding is a numeric vector representing the meaning of text. Similar
+texts should be near each other under cosine similarity even when they do not
+share exact words.
+
+The configured local embedding model is:
+
+  sentence-transformers/all-MiniLM-L6-v2
+  384 dimensions
+
+The embedding abstraction lives in ip_sakti/embedding/embedder.py. It supports
+Sentence Transformers and extension points for other providers. The provider
+normalizes embeddings, batches document encoding, counts tokens, and executes
+model work off the async event loop.
+
+Why embeddings help this project:
+
+  A user may say "I made a plant-based medicine and want approval" while the
+  statute says "Ayurvedic proprietary medicine". Keyword search alone may miss
+  that relationship. Dense retrieval can match paraphrases and related legal
+  concepts.
+
+Why embeddings are not enough:
+
+  Exact legal terms, section numbers, act names, and negations are often best
+  handled lexically. Dense similarity can retrieve something conceptually
+  close but legally inapplicable. The project therefore combines dense and
+  BM25-style retrieval.
+
+Test-mode warning: when IP_SAKTI_TEST_MODE=true, the engine intentionally uses
+deterministic mock vectors based on text hashes. That makes tests repeatable,
+but it is not semantic embedding quality and should not be used to claim model
+accuracy.
+
+
+8. Retrieval: dense, lexical, hybrid, graph, and authority
+-----------------------------------------------------------
+RetrievalEngine is in ip_sakti/retrieval/retrieval_engine.py.
+
+8.1 Dense retrieval
+-------------------
+The query is embedded using the same embedding space as document chunks. The
+vector store computes cosine similarity and returns top-k chunks after metadata
+filters such as jurisdiction or document type.
+
+8.2 Lexical retrieval
+---------------------
+InMemoryKeywordIndex tokenizes text and computes a BM25-style score. The key
+BM25 parameters are k1=1.5 and b=0.75. BM25 rewards term frequency but
+normalizes for document length and inverse document frequency. It is especially
+useful for:
+
+  - exact Act names;
+  - sections and clause numbers;
+  - named treaties;
+  - patent/trademark identifiers;
+  - statutory phrases.
+
+8.3 Hybrid retrieval
+--------------------
+For a hybrid request, semantic and keyword searches run in parallel. Scores
+are normalized and combined:
+
+  fused_score = alpha * normalized_dense
+              + (1 - alpha) * normalized_keyword
+
+The configured vector weight is commonly 0.6, so dense meaning gets slightly
+more influence while exact terms remain significant. The code comment mentions
+RRF, but the current concrete implementation in _fuse_results is a normalized
+weighted score, not a pure reciprocal-rank formula. This distinction matters
+when explaining or benchmarking the system.
+
+8.4 Graph retrieval
+-------------------
+The local NetworkX graph can associate entities with source chunks. Graph search
+matches query terms against graph entity names and returns linked chunks. It is
+an additional evidence path for entity relationships; it is not currently a
+full legal knowledge graph with complete rules, dates, and formal ontologies.
+
+8.5 Authority weighting
+-----------------------
+Legal evidence is not equally trustworthy. A primary statute or treaty should
+normally outrank commentary. SourceAuthoritySystem assigns tiers and weights:
+
+  TIER_1  primary legislation/treaties       1.0
+  TIER_2  subordinate rules/regulations      0.9
+  TIER_3  binding judicial material          0.95
+  TIER_4  regulatory/quasi-judicial          0.7
+  TIER_5  official guidance                   0.5
+  TIER_6  secondary material                  0.2
+
+The authority-aware reranker blends retrieval relevance with source authority.
+The intended effect is to avoid answering from an easy-to-match but weak source
+when a stronger source is available.
+
+
+9. Query processing and multi-angle retrieval
+----------------------------------------------
+RAGPipeline is in ip_sakti/rag/pipeline.py. The pipeline creates a RAGContext
+and executes stage handlers in order.
+
+9.1 Query analysis
+------------------
+IntentClassifier uses explicit regex/pattern rules, not an LLM classifier. It
+recognizes intents such as:
+
+  formulation classification
+  procedure query
+  compliance check
+  patent search
+  trademark/copyright/design search
+  legal research
+  freedom to operate
+  validity challenge
+  licensing
+
+It extracts simple entities such as patent numbers, case citation patterns, and
+years. It detects jurisdiction keywords such as India, USPTO, EPO, WIPO, UKIPO,
+CNIPA, and JPO. It also estimates complexity using word count, boolean terms,
+quotes, and recognized entities.
+
+This rule-based classifier is fast, transparent, and easy to audit. It is not a
+general NER model and it cannot understand every phrasing. The priority logic
+prevents broad words such as "plant" or "drug" from overriding explicit legal
+actions such as "patent" or "register".
+
+9.2 Query rewriting
+--------------------
+MultiQueryRewriter expands the question with jurisdiction, intent-specific
+synonyms, and legal angles. The point is recall: one wording rarely covers all
+the terminology in statutes, regulations, and guidance.
+
+9.3 Positive semantic probes
+----------------------------
+The current production configuration requests 24 positive semantic probes.
+The probes cover formulation category, registration procedure, safety,
+patentability, TKDL/prior art, ABS, Ayurveda categories, labelling,
+trademarks/GI, international export, forms/timelines, clinical evidence,
+enforcement, and cross-regime interactions.
+
+For each probe, the engine asks for the configured positive top-k results. In
+test mode the number of probes is capped at 4 to keep the 8001 test suite fast;
+production mode uses the configured 24.
+
+9.4 Negative semantic probes
+-----------------------------
+The system also creates three contrastive probes, for example:
+
+  - identify unrelated or non-applicable regimes;
+  - find exclusions and counterexamples;
+  - find foreign or purely commercial material that should not be treated as
+    Indian regulatory authority.
+
+Negative results are not shown as answer facts. They create a penalty signal.
+For a candidate chunk c:
+
+  adjusted_score(c) = positive_score(c)
+                     - negative_penalty * negative_score(c)
+
+The configured negative penalty is 0.20. This is a practical contrastive
+retrieval heuristic: evidence that repeatedly resembles an exclusion or wrong
+jurisdiction should be less likely to survive reranking.
+
+Important limitation: these are negative retrieval probes, not a second LLM
+"negative prompt" in the image-generation sense. They do not guarantee that
+all irrelevant law is removed. They provide a measurable down-weighting signal.
+
+9.5 Retrieval fusion and deduplication
+---------------------------------------
+Positive results, graph results, and negative-adjusted results are combined by
+chunk ID. A candidate is retained once, then sorted by score and clipped to the
+configured final retrieval count, normally 10.
+
+
+10. Reranking and evidence selection
+------------------------------------
+Two rerankers are configured:
+
+  1. AuthorityWeightedReranker
+  2. CrossEncoderReranker
+
+The authority reranker computes a blend of the retrieval score and the chunk's
+authority information. The cross-encoder is an optional second-stage model
+that scores query/passage pairs jointly, which is usually more precise than
+embedding similarity but slower.
+
+For test mode, cross-encoder scores are deterministic score decay by rank.
+For production, the cross-encoder is disabled unless:
+
+  IP_SAKTI_ENABLE_CROSS_ENCODER=true
+
+This is deliberate. Loading a multilingual cross-encoder can consume multiple
+gigabytes and make a local legal demo slow. The default production path uses
+authority-weighted retrieval scores instead of silently paying that latency.
+
+ContextBuilder then takes reranked chunks until the configured context budget
+is reached. The default legal context budget is 8,000 tokens. Each selected
+chunk becomes both prompt context and a citation record containing source name,
+jurisdiction, tier, section/provenance, score, and content preview.
+
+
+11. Generation and citation safety
+----------------------------------
+LLMGenerator in ip_sakti/rag/pipeline.py is the generation boundary.
+
+Production mode:
+
+  - reads NVIDIA_API_KEY from the environment;
+  - calls the OpenAI-compatible NVIDIA NIM endpoint;
+  - uses the configured model openai/gpt-oss-20b;
+  - uses low temperature 0.1 for more stable legal output;
+  - requests up to 4096 output tokens;
+  - sends a system instruction and a constructed evidence prompt.
+
+The system instruction tells the model to:
+
+  - answer only from supplied evidence;
+  - classify the formulation before recommending a pathway;
+  - distinguish India and international regimes;
+  - cite material claims with [n];
+  - give proportionate length instead of always being extremely brief;
+  - state information-not-legal-advice limits;
+  - never invent an authority, section, form, fee, deadline, or approval.
+
+The user prompt includes:
+
+  - the user query;
+  - structured requirements for classification and next steps;
+  - the retrieved context;
+  - a numbered source list;
+  - requested language.
+
+After generation, the code normalizes alternative full-width citation brackets.
+CitationValidator checks that every [n] in the answer refers to a supplied
+source. It does not prove that the language model's proposition is legally
+correct; it proves only that the citation ID exists. Source quality and claim
+support still require evaluation.
+
+Test mode does not call NVIDIA. It returns an extractive answer made from up
+to three citation previews. This makes tests deterministic and avoids API
+costs, but it is intentionally not a quality comparison with the production
+LLM.
+
+
+12. PDF upload has two meanings
+-------------------------------
+The chat UI offers two document modes.
+
+12.1 Add to corpus
+------------------
+The ingest mode calls /ingest/upload. The file is saved under the runtime
+uploads area and passes through fetch, validate, extract, chunk, enrich, and
+index. It becomes part of the persistent corpus in production mode.
+
+12.2 Use as prompt context
+--------------------------
+The prompt mode calls /query/upload. The server extracts readable text, limits
+the attachment text, and passes it as temporary attachment context to the same
+RAGPipeline. It does not add the document to the persistent index.
+
+This separation prevents a private one-off PDF from silently becoming shared
+knowledge while still allowing a user to ask questions about it.
+
+
+13. Jurisdiction and legal-domain behavior
+------------------------------------------
+The Query model carries jurisdiction and language. The UI exposes an India vs
+international switch. Retrieval applies jurisdiction metadata filters, and the
+generation prompt tells the model to keep national and international answers
+separate.
+
+This matters because the same plant/product question can involve:
+
+  - Indian Drugs and Cosmetics law;
+  - Indian biodiversity and ABS law;
+  - Indian patents, trademarks, GI, copyright, designs, and plant-variety law;
+  - CBD/Nagoya obligations;
+  - TRIPS/WIPO/PCT/Madrid/Hague/Budapest systems;
+  - destination-market food, cosmetic, supplement, or drug rules.
+
+The formulation classification flow is not a single legal conclusion. It is a
+triage step that identifies possible categories such as classical medicine,
+proprietary medicine, new/non-classical drug, phytopharmaceutical,
+Ayurveda-Aahar/nutraceutical, or cosmetic. Actual classification depends on
+facts, claims, ingredients, dosage, evidence, and the competent authority.
+
+
+14. Authority, provenance, and audit records
+---------------------------------------------
+SourceAuthoritySystem assigns source tiers and propagates authority metadata
+to chunks. The citation record also preserves content hash/source path fields
+where available.
+
+The API writes privacy-conscious audit events to:
+
+  data/runtime/audit/events.jsonl
+
+The audit helper intentionally records event type, user ID, query ID,
+jurisdiction, intent, citation count, confidence, and processing time rather
+than raw prompt text. This reduces unnecessary storage of sensitive user
+questions.
+
+Dashboard query telemetry is also aggregate-only. The production runtime stores
+counts and latency/category/jurisdiction aggregates in:
+
+  data/runtime/query_telemetry.json
+
+This file is not a replacement for a full analytics database. It exists so
+dashboard counters survive a process restart without saving raw queries.
+
+
+15. Dashboard metrics and why zeros appeared
+---------------------------------------------
+The dashboard reads /dashboard/metrics. That endpoint reports:
+
+  - distinct indexed source documents;
+  - indexed chunk count;
+  - authority-tier distribution;
+  - retrieval stats;
+  - completed/cited/abstained query telemetry;
+  - category and jurisdiction counts;
+  - test/live mode.
+
+The previous zero-prompts display had two causes:
+
+  1. The 30-prompt test suite ran against port 8001 while the browser dashboard
+     was sometimes connected to port 8000. Those are separate processes and
+     separate in-memory counters.
+  2. Telemetry was initially process-local and reset on restart.
+
+The production persistence fix loads and atomically saves aggregate telemetry.
+Test mode deliberately does not persist telemetry, so an 8001 evaluation run
+does not contaminate production dashboard statistics.
+
+
+16. Why these libraries are used
+---------------------------------
+FastAPI and Uvicorn
+  FastAPI provides typed asynchronous HTTP routes and automatic request
+  validation through Pydantic. Uvicorn is the ASGI server. Alternatives are
+  Flask/Gunicorn or Django/ASGI. FastAPI was selected for compact typed API
+  development and async file/model operations.
+
+Pydantic
+  Defines request/response contracts and prevents malformed data from flowing
+  deep into the pipeline. Alternatives are dataclasses plus manual validation
+  or Marshmallow. Pydantic gives stronger API boundary behavior.
+
+NumPy and PyTorch
+  Store and calculate vectors and support Sentence Transformers. Alternatives
+  include ONNX Runtime, TensorFlow, or pure Python, but pure Python is too
+  slow and less capable for model inference.
+
+Sentence Transformers
+  Supplies local semantic embeddings and optional cross-encoders. Alternatives
+  are an embedding API, Cohere/Voyage embeddings, or NVIDIA-hosted embeddings.
+  Local embeddings reduce per-query cost and keep document indexing private;
+  API embeddings can be stronger or easier to scale but require network,
+  credentials, and recurring cost.
+
+FAISS support
+  The repository includes a FAISS vector-store implementation for high-speed
+  in-memory search. The current canonical local deployment uses SQLiteVectorStore
+  or InMemoryVectorStore, not necessarily FAISS. FAISS is a future/performance
+  option rather than proof that the active store is FAISS.
+
+rank-bm25 concept / custom BM25-style index
+  Exact lexical matching is valuable for legal identifiers. The active
+  InMemoryKeywordIndex implements a small BM25-style index directly. An
+  Elasticsearch/OpenSearch deployment would be better for large distributed
+  corpora, but would add a service, operational cost, analyzers, and deployment
+  complexity.
+
+NetworkX
+  Provides a local graph representation for entity-to-chunk relationships.
+  Alternatives are Neo4j, Amazon Neptune, or a relational graph schema.
+  NetworkX is simple for a prototype and single-node deployment; it is not the
+  correct scale-out choice for a very large multi-user graph.
+
+PDF and document loaders
+  pypdf/pdfplumber/pdfminer/pypdfium2/unstructured/BeautifulSoup support common
+  legal document formats. These are used because Python's standard library
+  does not parse PDF layout, fonts, pages, and encoded text reliably.
+
+python-jose/PyJWT and cryptography
+  Provide JWT/API-key security primitives. Alternatives are an external
+  identity provider such as Auth0, Keycloak, Microsoft Entra, or a managed
+  gateway. Local JWT is adequate for the current demo but external identity is
+  preferable for enterprise identity, rotation, SSO, and revocation.
+
+Chart.js
+  Provides dashboard charts in the existing static frontend. An alternative is
+  D3 or a React chart library. Chart.js is smaller and integrates directly with
+  the vanilla JavaScript UI.
+
+
+17. Two or more viable alternatives and why we did not use them
+---------------------------------------------------------------
+Alternative A: hosted vector database such as Qdrant, Weaviate, Pinecone
+  Advantages: indexing, filtering, HNSW, persistence, scaling, and operational
+  tooling are already provided.
+  Why not current default: the project needs a local reproducible runtime with
+  no mandatory external service. SQLite plus local vectors makes the demo easy
+  to run and audit. A hosted vector DB should be considered when concurrency,
+  corpus size, replication, and multi-tenant isolation become requirements.
+
+Alternative B: Elasticsearch/OpenSearch for lexical and hybrid search
+  Advantages: mature BM25, legal analyzers, distributed indexing, filters,
+  highlighting, and operational dashboards.
+  Why not current default: it requires another service and schema lifecycle.
+  The local custom BM25 index demonstrates the behavior without making a
+  reviewer install Elasticsearch.
+
+Alternative C: LangChain/LlamaIndex as the primary orchestration framework
+  Advantages: fast connectors, retriever abstractions, prompt chains, agents,
+  and integrations.
+  Why not current default: the project needs explicit legal stages, authority
+  weighting, privacy rules, negative-probe scoring, and auditable control over
+  every step. Frameworks can still be used inside a stage, and loaders are
+  already wrapped, but the main pipeline remains custom so the behavior is
+  visible.
+
+Alternative D: a fully hosted model and embedding stack
+  Advantages: no local model download, potentially stronger models, easy
+  scaling, and managed availability.
+  Why not current default: legal documents and user questions may be sensitive;
+  local embeddings reduce data exposure and cost. NVIDIA NIM is used for the
+  generation boundary because the available NVIDIA credential supports the
+  user's preferred provider, while embedding remains local.
+
+Alternative E: React/Next.js frontend
+  Advantages: component reuse, routing, state libraries, and ecosystem.
+  Why not current default: the current application is a single static dashboard
+  and chat surface. Vanilla JS removes the build pipeline and keeps the same
+  FastAPI deployment self-contained. React becomes reasonable when the UI grows
+  into many independently owned views.
+
+Alternative F: an LLM-based query classifier
+  Advantages: better language coverage and flexible intent reasoning.
+  Why not current default: classifier output can vary, adds latency and cost,
+  and is harder to audit. The current rule classifier is transparent. A hybrid
+  approach could use rules for high-confidence legal signals and an LLM only
+  for ambiguous queries.
+
+
+18. Research and established IR ideas behind the design
+--------------------------------------------------------
+The implementation uses established ideas, but it should not be described as
+a formal reproduction of any paper unless a benchmark and implementation match
+are documented.
+
+RAG / Lewis et al.
+  Retrieval-Augmented Generation connects non-parametric retrieved memory to a
+  parametric generator. This project applies the same broad pattern: retrieve
+  legal chunks, place them into context, and generate a cited answer.
+
+BM25 / Robertson and colleagues
+  BM25 balances term frequency, inverse document frequency, and document length.
+  The custom lexical index follows that general scoring principle.
+
+Dense passage retrieval / Karpukhin et al.
+  Dense retrieval represents questions and passages in a vector space and uses
+  similarity for semantic matching. The local embedding provider applies this
+  general approach.
+
+Cross-encoder reranking / Nogueira and Cho style reranking
+  A cross-encoder reads a query and passage together and scores relevance. The
+  optional CrossEncoderReranker follows this second-stage retrieval pattern.
+
+Reciprocal Rank Fusion / Cormack, Clarke, and Buettcher
+  RRF is a standard way to fuse rankings from different retrieval systems. The
+  project conceptually uses the same multi-signal fusion goal, but the active
+  _fuse_results implementation uses normalized weighted scores. Do not claim it
+  is pure RRF without changing or documenting the formula.
+
+Contrastive/negative retrieval
+  The positive-minus-negative penalty is inspired by contrastive retrieval and
+  hard-negative reasoning: relevant candidates should be separated from
+  semantically adjacent but inapplicable candidates. The current penalty is a
+  pragmatic heuristic and needs an ablation study to prove improvement.
+
+Authority-aware legal retrieval
+  The authority tiers are domain logic rather than a standard library feature.
+  They encode a legal principle: primary binding material should influence
+  ranking more than weak secondary material, subject to jurisdiction and date.
+
+
+19. Why numerical settings can improve the system
+-------------------------------------------------
+Numerical settings are not magic quality guarantees. They control recall,
+precision, latency, memory, and answer context.
+
+24 positive probes
+  More angles increase recall for multi-regime questions. A product question
+  can require drug classification, patents, ABS, labelling, and export law.
+  The cost is up to 24 semantic searches per query, so latency and compute rise.
+
+3 negative probes
+  A small negative set provides contrast without multiplying cost as much as a
+  full negative corpus search. The 3 probes represent exclusions, wrong
+  jurisdiction, and unrelated regimes.
+
+positive_top_k=4 and negative_top_k=3
+  Each probe returns a small candidate list, keeping the union manageable. If
+  these values are too low, recall suffers; if too high, reranking and context
+  construction become slower and duplicates grow.
+
+top_k_final=10
+  Ten final candidates offer multi-source coverage while keeping the LLM
+  context readable. The context builder may select fewer if the token budget is
+  reached.
+
+negative_penalty=0.20
+  A penalty of 0.20 is strong enough to change ranking but not so strong that a
+  useful passage is automatically discarded because it appeared in a noisy
+  negative probe. This is a starting point, not a scientifically validated
+  optimum.
+
+chunk_size and overlap
+  Smaller chunks improve citation precision and reduce irrelevant text. Larger
+  chunks preserve context and reduce index count. Overlap protects legal
+  continuity but duplicates storage and evidence.
+
+temperature=0.1
+  Low temperature reduces variation in legal answers. It does not make an LLM
+  truthful; evidence grounding and validation remain necessary.
+
+max_context_tokens=8000 and max_tokens=4096
+  The context budget gives the generator enough multi-factor evidence. The
+  answer budget permits structured explanations but does not force a long answer.
+
+authority_weight=0.3
+  Relevance remains the majority signal, while authority has enough influence
+  to prefer stronger sources. Too much authority weight could hide a highly
+  relevant lower-tier guidance document; too little could overvalue commentary.
+
+How to prove a numerical improvement
+  Run an evaluation set with fixed prompts and compare ablations:
+
+    baseline: one query, dense only, no negative probes, no authority weight
+    hybrid: dense + BM25
+    hybrid-authority: add authority reranking
+    contrastive: add negative probes
+    full: add all stages
+
+  Measure citation precision, citation recall, answer faithfulness, answer
+  relevancy, abstention correctness, jurisdiction accuracy, latency, and cost.
+  The 30-case suite is a workflow smoke/evaluation corpus; it is not by itself
+  a statistically sufficient legal accuracy benchmark.
+
+
+20. What is custom and not part of a standard library
+-------------------------------------------------------
+The project-specific intellectual work is mainly in:
+
+  - legal intent patterns and formulation triage;
+  - multi-angle legal query probes;
+  - negative/exclusion probes and penalty scoring;
+  - source authority tiers and legal weighting;
+  - jurisdiction filters and India/international separation;
+  - legal citation record construction;
+  - citation marker validation;
+  - privacy-conscious audit event schema;
+  - PDF choice between persistent ingestion and ephemeral prompt context;
+  - dashboard pipeline graph and live API telemetry;
+  - formulation-oriented generation instructions;
+  - local test-mode deterministic behavior;
+  - test suite and 30-prompt workflow runner.
+
+These are not provided by FastAPI, NumPy, or Sentence Transformers as a single
+feature. They are application logic assembled around those libraries.
+
+
+21. Code walkthrough of one complete question
+----------------------------------------------
+Suppose the user asks:
+
+  "I made an Ayurvedic product with neem and turmeric using a new extraction
+   process. Which category applies, where do I register it, and can I patent
+   the process?"
+
+Step 1: Browser request
+  app.js runQuery() posts JSON to /query with query, user_id, language,
+  jurisdiction, and require_citations.
+
+Step 2: API conversion
+  app.py converts QueryRequest into the internal Query model and calls
+  rag_pipeline.run(query).
+
+Step 3: Classifier
+  IntentClassifier sees product/formulation/plant terms, registration/procedure
+  terms, and patent terms. Explicit legal intent is prioritized so patent or
+  procedure signals are not lost behind broad formulation vocabulary.
+
+Step 4: Probe creation
+  MultiQueryRewriter creates multiple positive angles such as classification,
+  registration authority, safety, patentability, and traditional knowledge.
+  It also creates three exclusion probes.
+
+Step 5: Search
+  Each probe is sent through RetrievalEngine. Dense similarity catches related
+  concepts; BM25 catches exact terms such as patent, registration, or Act names;
+  metadata filters keep the requested jurisdiction in scope.
+
+Step 6: Fusion and negative adjustment
+  Results are normalized and fused. Chunks that score on negative probes receive
+  a penalty. Duplicates are removed and the final candidate list is clipped.
+
+Step 7: Reranking
+  Authority weighting favors primary law and relevant official material. The
+  optional cross-encoder can improve pairwise relevance when explicitly enabled.
+
+Step 8: Context/citations
+  ContextBuilder formats selected passages and creates citation metadata. The
+  model sees the source list and the evidence text.
+
+Step 9: Generation
+  NVIDIA receives the guarded system prompt plus evidence and produces a
+  proportionate answer: classification, Indian pathway, patent implications,
+  ABS/TK concerns if supported, practical next steps, uncertainty, and a
+  disclaimer.
+
+Step 10: Citation validation
+  CitationValidator checks that every [n] marker points to an available source.
+  It cannot independently certify the law, so the answer still needs expert
+  review for high-stakes use.
+
+Step 11: API response and telemetry
+  app.py serializes segments, citations, confidence, retrieved chunks, intent,
+  jurisdiction, and warnings. RAGPipeline updates aggregate query telemetry,
+  and production mode persists it without raw text.
+
+Step 12: Frontend rendering
+  app.js joins answer segments, displays citations and confidence, and shows the
+  information-not-legal-advice message. Dashboard/pipeline pages fetch live
+  health and metrics rather than using simulated query values.
+
+
+22. Security and privacy behavior
+----------------------------------
+The API supports JWT and API-key authentication. Production endpoints require
+scopes for sensitive operations such as ingestion and admin metrics. Test mode
+has a deliberate local bypass for repeatable smoke tests; it must not be used
+as a production security configuration.
+
+Important controls include:
+
+  - environment-only credentials;
+  - allowed ingestion paths and domains;
+  - maximum document size;
+  - document validation;
+  - prompt/query input limits from Pydantic models;
+  - no raw query text in aggregate dashboard telemetry;
+  - local audit records for important events;
+  - explicit disclaimer and escalation path.
+
+The current demo authentication accepts any non-empty local demo credentials at
+the token endpoint. That is suitable for a local prototype only. A production
+deployment needs a real user store, password verification, key rotation,
+revocation, rate limiting backed by shared storage, and preferably SSO.
+
+
+23. Evaluation and testing
+--------------------------
+Focused tests are in tests/test_local_runtime.py and tests/test_prompt_suite.py.
+The 30 prompt file is:
+
+  docs/prompt_suite_30.txt
+
+The Bash runner is:
+
+  scripts/run_prompt_suite.sh
+
+It records one JSONL row per prompt and a summary under:
+
+  artifacts/prompt-runs/
+
+The suite covers different personas, languages, jurisdictions, product facts,
+IP questions, ABS/TK, international systems, clarification, and abstention.
+It checks workflow behavior such as HTTP success, answer presence, citations,
+retrieval counts, negative searches, and elapsed time. It does not establish
+that every legal proposition is correct. A gold-answer dataset reviewed by
+legal experts is required for that.
+
+Useful checks:
+
+  IP_SAKTI_TEST_MODE=true python -m pytest -q
+  bash -n scripts/run_prompt_suite.sh
+  node --check ip_sakti/web/static/js/app.js
+  Invoke-RestMethod http://127.0.0.1:8000/health
+  Invoke-RestMethod http://127.0.0.1:8000/dashboard/metrics
+
+
+24. Current limitations and honest status
+------------------------------------------
+The following are implemented or wired, but should not be overstated:
+
+  - The graph is a local NetworkX evidence graph, not a complete legal
+    ontology or Neo4j production cluster.
+  - The active hybrid fusion is normalized weighted fusion, not pure RRF.
+  - Semantic chunking currently falls back to recursive chunking.
+  - Test mode uses deterministic mock embeddings and extractive generation.
+  - Cross-encoder reranking is optional and disabled by default for responsiveness.
+  - Rule-based intent classification is transparent but not full language
+    understanding.
+  - Citation validation checks citation references, not legal truth.
+  - The 30 prompts are an evaluation harness, not proof of 100 percent accuracy.
+  - 8001 in-memory corpus state is lost on restart; 8000 production-like mode
+    uses SQLite persistence.
+  - The current local corpus is a curated demonstration corpus and must be
+    versioned, reviewed, and refreshed for real legal deployment.
+  - The assistant must not be used as final legal, regulatory, medical, or
+    filing advice without qualified human review.
+
+
+25. Recommended next improvements
+----------------------------------
+If this moves beyond a demo, the highest-value improvements are:
+
+  1. Create a legally reviewed golden set with expected authorities and claim
+     support, then run retrieval and citation ablations.
+  2. Replace test-mode mock vectors with a pinned, measured production embedding
+     model and record embedding model/version in index metadata.
+  3. Implement genuine structure-aware legal chunking that preserves Act,
+     section, subsection, schedule, and amendment boundaries.
+  4. Add document versioning and supersession logic so repealed or amended text
+     cannot silently outrank current law.
+  5. Use a real vector/lexical service when corpus size and concurrency require
+     it, while retaining a local fallback.
+  6. Add a reviewed jurisdiction classifier and a human confirmation step for
+     ambiguous India/international queries.
+  7. Make citation claim-support evaluation stricter than marker existence.
+  8. Add a real identity provider and shared rate-limit/audit infrastructure.
+  9. Add multilingual embeddings and evaluated Hindi/Indic-language answers.
+ 10. Add source freshness checks and official-source fetch/update jobs.
+
+
+26. Glossary
+------------
+API
+  Application Programming Interface. The HTTP contract used by the browser and
+  other clients.
+
+BM25
+  A lexical ranking function based on term frequency, inverse document
+  frequency, and document length normalization.
+
+Chunk
+  A retrievable passage extracted from a larger document.
+
+Embedding
+  A vector representation of text meaning.
+
+Hybrid retrieval
+  Retrieval that combines multiple signals, here dense and lexical search.
+
+Reranking
+  A second ranking step applied to an initial candidate set.
+
+RAG
+  Retrieval-Augmented Generation.
+
+RRF
+  Reciprocal Rank Fusion, a ranking-fusion method. This code has a hybrid
+  weighted fusion implementation with a similar multi-signal goal.
+
+Authority tier
+  Application-specific representation of source legal strength and provenance.
+
+Abstention
+  An answer that states the evidence is insufficient instead of inventing a
+  conclusion.
+
+NIM
+  NVIDIA inference microservice/API style used here through an
+  OpenAI-compatible chat-completions endpoint.
+
+
+Final mental model
+------------------
+The project is not just a chatbot. It is a source-to-answer system:
+
+  curated legal files
+    -> validated extraction
+    -> overlapping retrievable chunks
+    -> local embeddings + lexical index + graph links
+    -> multi-angle positive and negative retrieval
+    -> authority-aware reranking
+    -> evidence-sized context with provenance
+    -> NVIDIA grounded generation
+    -> citation validation, audit, telemetry, and UI
+
+The design favors transparency and local reproducibility over maximum
+production scale. Its strongest differentiator is not a single model; it is
+the combination of legal-domain routing, authority-aware evidence, explicit
+India/international separation, contrastive retrieval, citation-first output,
+and an inspectable pipeline.
