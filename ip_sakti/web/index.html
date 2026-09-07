@@ -124,18 +124,24 @@
       <div class="pipeline-body">
         <div class="p-rail">
           <div class="rail-block">
-            <h4>LIVE TELEMETRY</h4>
-            <div class="rail-note">Status, source counts, and indexed chunks are read from the backend health snapshot. Detailed per-node latency is not exposed by the current API.</div>
+            <h4>SIMULATION CONTROLS</h4>
+            <div class="slider-row"><span>Execution speed</span><span class="s-val" id="executionSpeedValue">1.0x</span><input id="executionSpeed" type="range" min="0.5" max="2" step="0.1" value="1"></div>
+            <div class="slider-row"><span>Query arrival rate</span><span class="s-val" id="queryRateValue">2.4/min</span><input id="queryRate" type="range" min="0.5" max="10" step="0.1" value="2.4"></div>
           </div>
           <div class="rail-block">
-            <h4>HEALTH</h4>
+            <h4>FAULT INJECTION &amp; RECOVERY</h4>
+            <div class="rail-btns"><button type="button" class="rail-btn warn" id="breakNode">Break<br>selected</button><button type="button" class="rail-btn" id="healNodes">Heal<br>all</button></div>
+            <div class="rail-note">Failures are visualized locally and trigger retry/backoff telemetry without changing the indexed corpus.</div>
+          </div>
+          <div class="rail-block">
+            <h4>ORCHESTRATOR HEALTH</h4>
             <div class="health-grid">
               <div class="health-cell"><div class="h-lbl">FAILING</div><div class="h-val" id="failingCount">0</div></div>
-              <div class="health-cell"><div class="h-lbl">QUEUED</div><div class="h-val" id="queuedCount">0</div></div>
+              <div class="health-cell"><div class="h-lbl">BUFFERED</div><div class="h-val" id="queuedCount">0</div></div>
             </div>
           </div>
           <div class="rail-block" style="flex:1;overflow-y:auto;">
-            <h4>SOURCES</h4>
+            <h4>INGESTION SOURCES</h4>
             <div id="railSources"></div>
           </div>
         </div>

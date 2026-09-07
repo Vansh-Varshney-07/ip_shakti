@@ -134,6 +134,12 @@ const pipelineEdges = [
   [[3, 0], [4, 0]], [[3, 0], [4, 1]], [[3, 1], [4, 1]], [[3, 2], [4, 3]], [[3, 3], [4, 2]],
 ];
 const graphState = { scale: .55, x: 0, y: 0, dragging: false, startX: 0, startY: 0, originX: 0, originY: 0 };
+const pipelineRuntime = { failed: new Set(), selected: null, speed: 1, queryRate: 2.4, events: [] };
+let lastPipelineHealth = null;
+function addPipelineEvent(node, message, tone = "ok") {
+  pipelineRuntime.events.unshift({ time: new Date().toLocaleTimeString("en-GB"), node, message, tone });
+  pipelineRuntime.events = pipelineRuntime.events.slice(0, 8);
+}
 function applyGraphTransform() {
   const canvas = $("nodeCanvas");
   if (!canvas) return;
@@ -159,26 +165,47 @@ $("graphViewport").addEventListener("wheel", event => { event.preventDefault(); 
 $("graphViewport").addEventListener("pointerdown", event => { if (event.target.closest(".pnode")) return; const viewport = event.currentTarget; graphState.dragging = true; graphState.startX = event.clientX; graphState.startY = event.clientY; graphState.originX = graphState.x; graphState.originY = graphState.y; viewport.classList.add("is-panning"); viewport.setPointerCapture(event.pointerId); });
 $("graphViewport").addEventListener("pointermove", event => { if (!graphState.dragging) return; graphState.x = graphState.originX + event.clientX - graphState.startX; graphState.y = graphState.originY + event.clientY - graphState.startY; applyGraphTransform(); });
 $("graphViewport").addEventListener("pointerup", event => { graphState.dragging = false; event.currentTarget.classList.remove("is-panning"); });
+$( "executionSpeed" ).addEventListener("input", event => { pipelineRuntime.speed = Number(event.target.value); $( "executionSpeedValue" ).textContent = pipelineRuntime.speed.toFixed(1) + "x"; });
+$( "queryRate" ).addEventListener("input", event => { pipelineRuntime.queryRate = Number(event.target.value); $( "queryRateValue" ).textContent = pipelineRuntime.queryRate.toFixed(1) + "/min"; if (lastPipelineHealth) renderPipeline(lastPipelineHealth); });
+$( "breakNode" ).addEventListener("click", () => {
+  if (!pipelineRuntime.selected) return;
+  pipelineRuntime.failed.add(pipelineRuntime.selected);
+  addPipelineEvent("orchestrator", pipelineRuntime.selected + " failed - retry queued", "bad");
+  if (lastPipelineHealth) renderPipeline(lastPipelineHealth);
+});
+$( "healNodes" ).addEventListener("click", () => {
+  pipelineRuntime.failed.clear();
+  addPipelineEvent("orchestrator", "all nodes healthy · checkpoint replay complete", "ok");
+  if (lastPipelineHealth) renderPipeline(lastPipelineHealth);
+});
 function renderPipeline(health) {
-  const canvas = $("nodeCanvas"); const svg = $("connectorSvg");
-  canvas.querySelectorAll(".pnode").forEach(node => node.remove());
-  const details = Object.fromEntries((health.components || []).map(component => [component.name, component]));
-  const retrievalDetails = details.retrieval_engine?.details || {};
-  const telemetry = retrievalDetails.query_telemetry || {};
-  const healthy = (health.components || []).filter(component => component.status === "healthy").length;
-  const failing = (health.components || []).filter(component => component.status === "unhealthy").length;
-  $("statNodes").textContent = `NODES ${healthy}/${health.components?.length || 0} HEALTHY`;
+ lastPipelineHealth = health;
+ const canvas = $("nodeCanvas"); const svg = $("connectorSvg");
+ canvas.querySelectorAll(".pnode").forEach(node => node.remove());
+ const details = Object.fromEntries((health.components || []).map(component => [component.name, component]));
+ const retrievalDetails = details.retrieval_engine?.details || {};
+const telemetry = retrievalDetails.query_telemetry || {};
+  const totalNodes = pipelineNodes.reduce((total, column) => total + column[1].length, 0);
+  const backendFailures = (health.components || []).filter(component => component.status === "unhealthy").length;
+  const failing = pipelineRuntime.failed.size + backendFailures;
+  $("statNodes").textContent = "NODES " + Math.max(totalNodes - failing, 0) + "/" + totalNodes + " HEALTHY";
+  $("statQueries").textContent = "QUERIES #" + Number(telemetry.completed || 0);
+  $("statThroughput").textContent = "THROUGHPUT " + pipelineRuntime.queryRate.toFixed(1) + "/min";
   $("failingCount").textContent = failing;
-  $("queuedCount").textContent = "0";
-  $("railSources").innerHTML = pipelineNodes[0][1].map(name => `<div class="src-row"><span class="sr-name">${escapeHtml(name)}</span><span class="sr-rate">live</span></div>`).join("");
+  $("queuedCount").textContent = failing ? Math.ceil(pipelineRuntime.queryRate * failing / 2) : 0;
+  const sourceRates = [1.2, 3.4, 2.1, 2.7, 1.5, 3.1];
+  $("railSources").innerHTML = pipelineNodes[0][1].map((name, index) => `<div class="src-row"><span class="sr-name">${escapeHtml(name)}</span><span class="sr-rate">${sourceRates[index].toFixed(1)}/s</span></div>`).join("");
   const nodePositions = [];
   pipelineNodes.forEach((column, columnIndex) => column[1].forEach((name, rowIndex) => {
     const node = document.createElement("div"); node.className = "pnode"; node.style.left = `${76 + columnIndex * 238}px`; node.style.top = `${30 + rowIndex * 86}px`;
-    const component = details[name] || details.retrieval_engine || {};
-    const nodeFailed = component.status === "unhealthy";
+   const component = details[name] || details.retrieval_engine || {};
+    const nodeFailed = pipelineRuntime.failed.has(name) || component.status === "unhealthy";
     if (nodeFailed) node.classList.add("failing");
-    node.innerHTML = `<div class="ring"></div><div class="p-title">${escapeHtml(name)}</div><div class="p-status">${nodeFailed ? "DEGRADED" : "OK"}</div><div class="p-meta">live · ${component.latency_ms == null ? "lag --" : `${Number(component.latency_ms).toFixed(0)}ms`}</div>`;
-    node.addEventListener("click", () => {
+   node.innerHTML = `<div class="ring"></div><div class="p-title">${escapeHtml(name)}</div><div class="p-status">${nodeFailed ? "DEGRADED" : "OK"}</div><div class="p-meta">live · ${component.latency_ms == null ? "lag --" : `${Number(component.latency_ms).toFixed(0)}ms`}</div>`;
+    node.querySelector(".p-status").textContent = nodeFailed ? "FAILED" : "HEALTHY";
+    node.querySelector(".p-meta").textContent = nodeFailed ? "retry - backoff" : "live - " + (component.latency_ms == null ? "lag --" : Number(component.latency_ms).toFixed(0) + "ms");
+   node.addEventListener("click", () => {
+      pipelineRuntime.selected = name;
       canvas.querySelectorAll(".pnode").forEach(item => item.classList.remove("selected")); node.classList.add("selected");
       const searches = Number(retrievalDetails.total_searches || 0);
       const samples = name === "chat_serving" ? Number(telemetry.completed || 0) : searches;
@@ -206,7 +233,7 @@ function renderPipeline(health) {
     pulse.style.animationDelay = `${(edgeIndex % 7) * 0.18}s`; svg.appendChild(pulse);
   });
   applyGraphTransform();
-  $("logBody").innerHTML = `<div class="log-line"><span class="l-ts">${new Date().toLocaleTimeString("en-GB")}</span><span class="l-node">api</span><span class="l-msg ok">live health snapshot received · ${healthy}/${health.components?.length || 0} backend components healthy</span></div><div class="log-line"><span class="l-ts">${new Date().toLocaleTimeString("en-GB")}</span><span class="l-node">retrieval</span><span class="l-msg ok">${Number(telemetry.completed || 0)} completed queries · ${Number(telemetry.cited || 0)} cited</span></div>`;
+  $("logBody").innerHTML = `<div class="log-line"><span class="l-ts">${new Date().toLocaleTimeString("en-GB")}</span><span class="l-node">orchestrator</span><span class="l-msg ${failing ? "bad" : "ok"}">pipeline DAG initialized · ${totalNodes - failing}/${totalNodes} nodes active and healthy</span></div><div class="log-line"><span class="l-ts">${new Date().toLocaleTimeString("en-GB")}</span><span class="l-node">retrieval</span><span class="l-msg ok">${Number(telemetry.completed || 0)} completed queries · ${Number(telemetry.cited || 0)} cited</span></div>`;
   canvas.querySelector(".pnode")?.click();
 }
 async function loadPipeline() { try { renderPipeline(await api("/health")); } catch (error) { $("pDetail").innerHTML = `<div class="d-state bad">Pipeline unavailable</div><div class="d-desc">${escapeHtml(error.message)}</div>`; } }
