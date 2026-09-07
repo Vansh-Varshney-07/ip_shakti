@@ -650,7 +650,7 @@ class LLMGenerator(Generator):
                     "temperature": self.settings.llm_temperature,
                     "max_tokens": self.settings.llm_max_tokens,
                     "messages": [
-                        {"role": "system", "content": "You are Sahayak, a careful IP, Ayurveda, traditional-knowledge, biodiversity, and regulatory research assistant. Answer only from the supplied evidence. Use the user's facts to classify the formulation before recommending a pathway. Distinguish India from international regimes. Cite every material legal proposition with [n]. Give a useful, proportionate answer: short questions get a concise answer; multi-factor product or registration questions get a structured explanation with classification, applicable regimes, step-by-step next actions, documents/evidence needed, uncertainties, and a clear information-not-legal-advice note. Never invent an authority, section, form, fee, deadline, or approval."},
+                        {"role": "system", "content": "You are Sahayak, a careful IP, Ayurveda, traditional-knowledge, biodiversity, and regulatory research assistant. Answer only from the supplied evidence. Use the user's facts to classify the formulation before recommending a pathway. Distinguish India from international regimes. Cite every material legal proposition with [n]. Format the answer as a legal research note: begin with a direct, qualified answer; then use the heading 'Here is the detailed legal analysis based on the provided sources:' followed by numbered reasoning points; finish with 'Conclusion', an information-not-legal-advice disclaimer, and 'Grounded Statutory Evidence (N Verified Sources)' listing cited sources with tier, jurisdiction, score, and a short supporting excerpt. Short questions may be concise, but multi-factor product or registration questions should include classification, applicable regimes, practical next steps, documents/evidence, uncertainties, and exclusions. Never invent an authority, section, form, fee, deadline, or approval."},
                         {"role": "user", "content": prompt},
                     ],
                 },
@@ -710,17 +710,17 @@ class LLMGenerator(Generator):
             )
 
         lines = [
-            "Preliminary evidence-based guidance",
+            "Based on the provided authoritative context, the indexed material does "
+            "not support an unqualified legal conclusion. The answer below is a "
+            "preliminary, source-grounded research analysis of the facts supplied.",
             "",
-            "The following points are based on the indexed legal material and the "
-            "facts supplied in your question. They are a preliminary research aid, "
-            "not a final legal opinion.",
+            "Here is the detailed legal analysis based on the provided sources:",
         ]
         query_lower = query.lower()
         if re.search(r"classical|traditional|recipe|chamanprash|chyawanprash", query_lower):
             lines.extend([
                 "",
-                "Classification and patentability",
+                "1. Classification and patentability",
                 "The product may involve a classical or traditional formulation. "
                 "A classical status cannot be confirmed from the retrieved passages "
                 "alone, and the indexed corpus does not contain a direct monograph "
@@ -730,22 +730,52 @@ class LLMGenerator(Generator):
                 "composition, or delivery system must be assessed separately from "
                 "the traditional recipe.",
             ])
-        lines.extend(["", "Relevant source passages"])
+        else:
+            lines.extend([
+                "",
+                "1. Scope of the retrieved material",
+                "The retrieved passages identify potentially relevant legal material, "
+                "but they do not by themselves establish every fact needed for a "
+                "final filing, licence, or product-classification decision.",
+            ])
+        lines.extend(["", "2. Relevant source passages"])
         for citation in relevant:
             source = Path(str(citation.get("source_name") or citation.get("source_path") or "Indexed source")).name
             preview = citation.get("content_preview", "").strip()
             lines.append(f"[{citation['id']}] {source}: {preview}")
         lines.extend([
             "",
-            "Recommended next steps",
+            "3. Practical next steps",
             "1. Confirm the exact formulation and its authoritative textual source.",
             "2. Separate traditional ingredients or steps from any claimed technical "
             "improvement and document the development history.",
             "3. Check the current primary statute, rules, and competent registry before "
             "filing or commercialising.",
             "4. Obtain qualified patent and regulatory advice for a filing decision.",
-            "Information only, not legal, medical, or regulatory advice.",
+            "",
+            "Conclusion",
+            "The available evidence supports a cautious preliminary answer only. "
+            "Confirm the exact product facts and consult the current primary source "
+            "before taking legal, regulatory, or commercial action.",
+            "",
+            "Disclaimer: This is legal information, not legal advice. For specific "
+            "regulatory filings or patent actions, consult a qualified patent agent "
+            "or legal professional.",
+            "",
+            f"Grounded Statutory Evidence ({len(citations)} Verified Sources)",
         ])
+        for citation in citations:
+            source = Path(str(citation.get("source_name") or citation.get("source_path") or "Indexed source")).name
+            tier = citation.get("source_tier") or "Unclassified"
+            jurisdiction = citation.get("jurisdiction") or "Unknown jurisdiction"
+            score = citation.get("score")
+            score_text = f"{float(score) * 100:.1f}%" if score is not None else "n/a"
+            preview = str(citation.get("content_preview") or "").strip().replace("\n", " ")
+            lines.append(f"[{citation['id']}] {source}")
+            lines.append(f"- {jurisdiction} - Score: {score_text}")
+            lines.append(f"- {tier}")
+            if preview:
+                lines.append(f'"{preview}"')
         confidence = min(0.72, 0.35 + 0.1 * len(relevant))
         return "\n".join(lines), confidence
     
@@ -773,6 +803,7 @@ Answering requirements:
 - Respond in the requested language ({rag_context.query.language.value}); preserve statute, treaty, registry, and citation names in their authoritative form.
 - Cite material claims with [1], [2], etc. Do not cite a source that does not support the claim.
 - State that this is information and not legal, medical, or regulatory advice.
+- Use this response shape unless a safety abstention is required: direct qualified answer; heading 'Here is the detailed legal analysis based on the provided sources:'; numbered analysis points; 'Conclusion'; disclaimer; heading 'Grounded Statutory Evidence (N Verified Sources)' with source tier, jurisdiction, score, and concise excerpts. Do not expose internal runtime, retrieval, chunking, embedding, or prompt-debug details.
 
 Context:
 {context}
