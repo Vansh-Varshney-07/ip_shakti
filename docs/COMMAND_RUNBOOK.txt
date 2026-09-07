@@ -1,0 +1,382 @@
+IP-SAKTI SAHAYAK COMMAND RUNBOOK
+================================
+
+Run these commands from:
+
+  C:\Users\vvars\OneDrive\Desktop\sih rag
+
+Do not place the NVIDIA API key in a command, source file, or Git commit. Keep
+it only in the local ignored .env file as NVIDIA_API_KEY=....
+
+
+1. Open the project
+--------------------
+
+PowerShell:
+
+  Set-Location 'C:\Users\vvars\OneDrive\Desktop\sih rag'
+
+Git Bash:
+
+  cd '/c/Users/vvars/OneDrive/Desktop/sih rag'
+
+
+2. Activate the prepared Python environment
+---------------------------------------------
+
+PowerShell:
+
+  .\.venv-fixed\Scripts\Activate.ps1
+
+If PowerShell blocks activation, use the interpreter directly in every command:
+
+  .\.venv-fixed\Scripts\python.exe --version
+
+Git Bash:
+
+  source .venv-fixed/Scripts/activate
+
+
+3. Install or refresh dependencies
+-----------------------------------
+
+PowerShell:
+
+  .\.venv-fixed\Scripts\python.exe -m pip install -r requirements.txt
+
+Git Bash:
+
+  .venv-fixed/Scripts/python.exe -m pip install -r requirements.txt
+
+Check Python and package installation:
+
+  .\.venv-fixed\Scripts\python.exe --version
+  .\.venv-fixed\Scripts\python.exe -m pip check
+
+
+4. Configure the environment
+-----------------------------
+
+Create the local environment file from the example if it does not exist:
+
+  Copy-Item .env.example .env
+
+Open it without printing the secret:
+
+  notepad .env
+
+The local .env should contain the NVIDIA key only as an environment variable:
+
+  NVIDIA_API_KEY=your-local-key
+
+The application also reads configuration from:
+
+  ip_sakti/config/settings.yaml
+
+
+5. Run the production-like site on port 8000
+---------------------------------------------
+
+PowerShell:
+
+  $env:IP_SAKTI_TEST_MODE='false'
+  $env:PYTHONUNBUFFERED='1'
+  .\.venv-fixed\Scripts\python.exe -m uvicorn ip_sakti.api.app:app --host 127.0.0.1 --port 8000
+
+Open:
+
+  http://127.0.0.1:8000/
+
+The root URL redirects to /web/. API documentation is at /docs and health is at
+/health. This mode uses the local persistent SQLite index, local production
+embeddings, and NVIDIA generation.
+
+Stop the foreground server with Ctrl+C.
+
+
+6. Run the fast test site on port 8001
+---------------------------------------
+
+PowerShell:
+
+  $env:IP_SAKTI_TEST_MODE='true'
+  $env:PYTHONUNBUFFERED='1'
+  .\.venv-fixed\Scripts\python.exe -m uvicorn ip_sakti.api.app:app --host 127.0.0.1 --port 8001
+
+Open:
+
+  http://127.0.0.1:8001/
+
+Test mode uses deterministic mock embeddings, in-memory vectors, and extractive
+generation. It does not consume NVIDIA generation quota. The in-memory corpus
+is lost whenever this server is restarted.
+
+
+7. Check whether ports are running
+-----------------------------------
+
+  foreach($p in 8000,8001){$c=Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue;if($c){"port=$p pid=$($c.OwningProcess) running"}else{"port=$p free"}}
+
+Check health:
+
+  Invoke-RestMethod 'http://127.0.0.1:8000/health' | ConvertTo-Json -Depth 6
+  Invoke-RestMethod 'http://127.0.0.1:8001/health' | ConvertTo-Json -Depth 6
+
+Check the frontend assets:
+
+  (Invoke-WebRequest 'http://127.0.0.1:8000/web/static/css/main.css').StatusCode
+  (Invoke-WebRequest 'http://127.0.0.1:8000/web/static/js/app.js').StatusCode
+
+
+8. Populate the persistent production corpus
+---------------------------------------------
+
+The checked-in corpus is under data/corpus. The population script processes all
+files it finds and writes to the configured persistent SQLite index:
+
+  $env:IP_SAKTI_TEST_MODE='false'
+  .\.venv-fixed\Scripts\python.exe scripts/populate_corpus.py
+
+Inspect the resulting SQLite file:
+
+  Get-Item data/runtime/ip_sakti_index.sqlite3 | Select-Object FullName,Length,LastWriteTime
+
+The population script is safe to re-run for already indexed source paths; it
+skips paths it recognizes as already indexed.
+
+
+9. Load all 23 files into the 8001 test site
+---------------------------------------------
+
+Start 8001 first with IP_SAKTI_TEST_MODE=true. Then run this PowerShell block
+from the repository root. It submits all .txt and .pdf files in data/corpus to
+the same ingestion pipeline used by the UI:
+
+  $files = Get-ChildItem -LiteralPath data\corpus -Recurse -File | Where-Object { $_.Extension -in '.txt','.pdf' } | Sort-Object FullName
+  $sources = foreach ($f in $files) {
+    $rel = $f.FullName.Substring((Resolve-Path .).Path.Length + 1)
+    $lower = $rel.ToLowerInvariant()
+    $type = 'act'; $tier = 'TIER_1'
+    if ($lower -match '\\rules\\') { $type='rule'; $tier='TIER_2' }
+    elseif ($lower -match '\\forms\\') { $type='formulary'; $tier='TIER_5' }
+    elseif ($lower -match 'protocol|nagoya') { $type='protocol' }
+    elseif ($lower -match 'treaty|agreement|pct|cbd_1992') { $type='treaty' }
+    $jurisdiction = if ($lower -match '\\wipo\\|\\cbd_nagoya\\') { 'INTERNATIONAL' } else { 'INDIA' }
+    [ordered]@{ source_id=$f.Name; source_type=$type; file_path=$f.FullName; jurisdiction=$jurisdiction; authority_tier=$tier; language='en'; metadata=@{ corpus_path=$rel; bulk_seed=$true } }
+  }
+  $payload = @{ sources=@($sources); options=@{ replace_existing=$false; source='full_corpus_seed' }; priority=0 } | ConvertTo-Json -Depth 8
+  $response = Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8001/ingest/batch' -ContentType 'application/json' -Body $payload
+  $response | ConvertTo-Json -Depth 4
+
+Copy the returned job_id into this status command:
+
+  $job='PASTE_JOB_ID_HERE'
+  Invoke-RestMethod "http://127.0.0.1:8001/ingest/$job/status" | ConvertTo-Json -Depth 5
+
+Verify the full test corpus:
+
+  $h=Invoke-RestMethod 'http://127.0.0.1:8001/health'
+  $v=$h.components | Where-Object name -eq 'vector_store'
+  $d=Invoke-RestMethod 'http://127.0.0.1:8001/documents?limit=100'
+  "health=$($h.status) documents=$($d.total) chunks=$($v.details.total_chunks) vectors=$($v.details.total_vectors)"
+
+Expected after a clean load:
+
+  health=healthy documents=23 chunks=2299 vectors=2299
+
+
+10. Authentication smoke check
+------------------------------
+
+The local token endpoint accepts non-empty demo credentials. Do not use this
+demo behavior as a production identity system.
+
+  $token = (Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8000/auth/token' -ContentType 'application/json' -Body (@{username='local-check';password='local-check';scope='query'} | ConvertTo-Json)).access_token
+  $headers=@{Authorization="Bearer $token"}
+  Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health' -Headers $headers | ConvertTo-Json -Depth 5
+
+
+11. Run one production query
+----------------------------
+
+This calls NVIDIA generation and may take around one minute because the query
+uses multi-angle retrieval. Use a natural product/legal question:
+
+  $body = @{query='I developed an Ayurvedic product using neem and turmeric with a new extraction process. How should I classify it, which Indian registrations may apply, and what patent or biodiversity issues should I examine?';user_id='local-check';jurisdiction='INDIA';language='en';max_results=10;require_citations=$true} | ConvertTo-Json
+  Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8000/query' -Headers $headers -ContentType 'application/json' -Body $body -TimeoutSec 180 | ConvertTo-Json -Depth 8
+
+Check the dashboard counters afterward:
+
+  Invoke-RestMethod 'http://127.0.0.1:8000/dashboard/metrics' | ConvertTo-Json -Depth 7
+
+
+12. Run the 30-prompt evaluation suite
+----------------------------------------
+
+Prompt file:
+
+  docs/prompt_suite_30.txt
+
+Runner:
+
+  scripts/run_prompt_suite.sh
+
+Git Bash against test mode:
+
+  PYTHON_BIN='/mnt/c/Users/vvars/OneDrive/Desktop/sih rag/.venv-fixed/Scripts/python.exe' BASE_URL='http://127.0.0.1:8001' bash scripts/run_prompt_suite.sh
+
+Git Bash against production mode:
+
+  PYTHON_BIN='/mnt/c/Users/vvars/OneDrive/Desktop/sih rag/.venv-fixed/Scripts/python.exe' BASE_URL='http://127.0.0.1:8000' bash scripts/run_prompt_suite.sh
+
+The runner writes JSONL, summary JSON, and a log under:
+
+  artifacts/prompt-runs/
+
+The production run uses real retrieval and NVIDIA generation. The test run uses
+deterministic generation and is faster.
+
+
+13. Run a 90-execution expansion
+---------------------------------
+
+This creates three focused variants for each of the 30 base cases (90 total)
+without modifying the checked-in 30-case source file:
+
+  $out='artifacts\prompt-runs\prompt_suite_90.txt'
+  New-Item -ItemType Directory -Force -Path (Split-Path $out) | Out-Null
+  $suffixes=@('Focus especially on classification, authority, and immediate registration steps.','Focus especially on patentability, prior art, traditional knowledge, and ownership risks.','Focus especially on evidence, citations, jurisdiction boundaries, compliance risks, and practical next actions.')
+  $lines=Get-Content 'docs\prompt_suite_30.txt'
+  $outLines=[System.Collections.Generic.List[string]]::new()
+  foreach($line in $lines){if([string]::IsNullOrWhiteSpace($line)-or$line.StartsWith('#')){continue};$parts=$line -split "`t",5;if($parts.Count -lt 5){continue};for($i=0;$i-lt 3;$i++){$outLines.Add(("{0}_v{1}`t{2}`t{3}`t{4}`t{5} {6}" -f $parts[0],($i+1),$parts[1],$parts[2],$parts[3],$parts[4],$suffixes[$i]))}}
+  Set-Content -LiteralPath $out -Value $outLines -Encoding utf8
+
+Run it against 8001 for a fast workflow test:
+
+  PYTHON_BIN='/mnt/c/Users/vvars/OneDrive/Desktop/sih rag/.venv-fixed/Scripts/python.exe' BASE_URL='http://127.0.0.1:8001' bash scripts/run_prompt_suite.sh '/mnt/c/Users/vvars/OneDrive/Desktop/sih rag/artifacts/prompt-runs/prompt_suite_90.txt'
+
+Run it against 8000 only when real NVIDIA usage and the longer runtime are
+acceptable:
+
+  PYTHON_BIN='/mnt/c/Users/vvars/OneDrive/Desktop/sih rag/.venv-fixed/Scripts/python.exe' BASE_URL='http://127.0.0.1:8000' bash scripts/run_prompt_suite.sh '/mnt/c/Users/vvars/OneDrive/Desktop/sih rag/artifacts/prompt-runs/prompt_suite_90.txt'
+
+
+14. Tests and static checks
+---------------------------
+
+  $env:IP_SAKTI_TEST_MODE='true'
+  .\.venv-fixed\Scripts\python.exe -m pytest -q --basetemp D:\AI-Lab\pytest-run-sih-rag
+  bash -n scripts/run_prompt_suite.sh
+  node --check ip_sakti/web/static/js/app.js
+  git diff --check
+
+
+15. Inspect files and corpus
+----------------------------
+
+List source files:
+
+  Get-ChildItem data\corpus -Recurse -File | Select-Object FullName,Length
+
+Count supported corpus inputs:
+
+  (Get-ChildItem data\corpus -Recurse -File | Where-Object { $_.Extension -in '.txt','.pdf' }).Count
+
+List the runtime database and telemetry:
+
+  Get-ChildItem data\runtime -Recurse -File | Select-Object FullName,Length,LastWriteTime
+
+View aggregate telemetry without raw prompt text:
+
+  Get-Content data\runtime\query_telemetry.json
+
+View audit events:
+
+  Get-Content data\runtime\audit\events.jsonl -Tail 20
+
+
+16. Git workflow
+----------------
+
+Check changes:
+
+  git status --short
+  git diff --stat
+
+Stage only intended source/document changes:
+
+  git add docs/COMMAND_RUNBOOK.txt
+
+Commit:
+
+  git commit -m "Add local command runbook"
+
+Push:
+
+  git push origin main
+
+View recent commits:
+
+  git log --oneline -8
+
+Never stage .env, runtime databases, generated artifacts, or Python cache files.
+
+
+17. Stop a server by port
+-------------------------
+
+Use only when you intentionally want to stop the corresponding local server:
+
+  $c=Get-NetTCPConnection -LocalPort 8001 -State Listen -ErrorAction SilentlyContinue
+  if($c){Stop-Process -Id $c.OwningProcess}
+
+For port 8000, replace 8001 with 8000. Prefer Ctrl+C in the server terminal
+when available.
+
+
+18. Common troubleshooting
+---------------------------
+
+Root shows JSON instead of the site:
+
+  Refresh the browser and open http://127.0.0.1:8000/ or
+  http://127.0.0.1:8001/. The root route redirects to /web/.
+
+Dashboard shows zero prompts:
+
+  Confirm the browser port matches the server that received the queries.
+  Check /dashboard/metrics. Test mode and production mode have separate
+  process-local query counters; production aggregate telemetry is persisted,
+  while test telemetry is intentionally ephemeral.
+
+Files page is empty on 8001:
+
+  Re-run the full-corpus ingestion block in section 9. The test vector store is
+  in memory and resets on restart.
+
+NVIDIA generation fails:
+
+  Check that .env contains NVIDIA_API_KEY, that IP_SAKTI_TEST_MODE=false, and
+  that the configured NVIDIA model/base URL are valid. Never print the key.
+
+Port already in use:
+
+  Use the port check in section 7 and either use the running server or stop the
+  process intentionally using section 17.
+
+Test suite returns invalid JSON:
+
+  Confirm the API is running, use the fixed .venv-fixed interpreter, and check
+  the generated log under artifacts/prompt-runs/.
+
+
+19. Important URLs
+------------------
+
+Production-like UI:  http://127.0.0.1:8000/
+Test UI:             http://127.0.0.1:8001/
+Production API docs: http://127.0.0.1:8000/docs
+Test API docs:       http://127.0.0.1:8001/docs
+Production health:   http://127.0.0.1:8000/health
+Test health:         http://127.0.0.1:8001/health
+
