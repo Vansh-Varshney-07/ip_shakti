@@ -750,6 +750,21 @@ class RetrievalEngine:
         filters: Dict[str, Any],
     ) -> List[RetrievalResult]:
         """Pure vector similarity search."""
+        # Hash-based test vectors are useful for repeatability but have no
+        # semantic meaning. Use the deterministic lexical index as the test
+        # semantic signal so demo answers are relevant instead of arbitrary.
+        if self.settings.test_mode:
+            lexical_results = await self.keyword_index.search(query, top_k, filters)
+            if lexical_results:
+                max_score = max(float(score) for _, score in lexical_results) or 1.0
+                return [
+                    RetrievalResult(
+                        chunk=chunk,
+                        score=float(score) / max_score,
+                        strategy=RetrievalStrategy.SEMANTIC,
+                    )
+                    for chunk, score in lexical_results
+                ]
         query_vector = await self.embedding_provider.embed_query(query)
         results = await self.vector_store.search(query_vector, top_k, filters)
         
