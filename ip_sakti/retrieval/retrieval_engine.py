@@ -5,6 +5,7 @@ References Phase 9 (RAG pipeline) for pipeline logic.
 """
 
 import asyncio
+from collections import Counter
 import json
 import logging
 import os
@@ -316,6 +317,10 @@ class InMemoryKeywordIndex(KeywordIndex):
         self.chunks: Dict[str, DocumentChunk] = {}
         self.inverted_index: Dict[str, Set[str]] = {}  # term -> chunk_ids
         self.doc_lengths: Dict[str, int] = {}
+        # Cache token frequencies once at ingestion time. Re-tokenizing every
+        # PDF chunk inside every BM25 query made the first natural-language
+        # request disproportionately slow.
+        self.term_frequencies: Dict[str, Counter] = {}
         self.avg_doc_length = 0
         self.k1 = config.get('bm25_k1', 1.5)
         self.b = config.get('bm25_b', 0.75)
@@ -323,7 +328,16 @@ class InMemoryKeywordIndex(KeywordIndex):
     def _tokenize(self, text: str) -> List[str]:
         """Simple tokenization."""
         import re
-        return [t.lower() for t in re.findall(r'\b\w+\b', text) if len(t) > 2]
+        stop_words = {
+            "about", "after", "also", "been", "being", "could", "does",
+            "from", "have", "into", "more", "only", "please", "should",
+            "that", "their", "there", "these", "they", "this", "under",
+            "what", "when", "where", "which", "with", "would", "your",
+        }
+        return [
+            token for token in re.findall(r'\b\w+\b', text.lower())
+            if len(token) > 2 and token not in stop_words
+        ]
     
     async def initialize(self) -> None:
         logger.info("In-memory keyword index initialized")
@@ -333,6 +347,7 @@ class InMemoryKeywordIndex(KeywordIndex):
             self.chunks[chunk.id] = chunk
             tokens = self._tokenize(chunk.content)
             self.doc_lengths[chunk.id] = len(tokens)
+            self.term_frequencies[chunk.id] = Counter(tokens)
             
             # Update inverted index
             for token in set(tokens):  # Unique terms per doc
@@ -385,8 +400,8 @@ class InMemoryKeywordIndex(KeywordIndex):
                 df = len(self.inverted_index[token])  # Document frequency
                 idf = np.log((N - df + 0.5) / (df + 0.5) + 1)
                 
-                # Term frequency in this document
-                tf = self._tokenize(chunk.content).count(token)
+                # Term frequency was computed during ingestion.
+                tf = self.term_frequencies.get(chunk_id, {}).get(token, 0)
                 
                 # BM25 formula
                 numerator = tf * (self.k1 + 1)
@@ -418,6 +433,7 @@ class InMemoryKeywordIndex(KeywordIndex):
     async def delete(self, chunk_ids: List[str]) -> None:
         for cid in chunk_ids:
             self.chunks.pop(cid, None)
+            self.term_frequencies.pop(cid, None)
             self.doc_lengths.pop(cid, None)
             # Note: inverted index cleanup would be needed in production
     

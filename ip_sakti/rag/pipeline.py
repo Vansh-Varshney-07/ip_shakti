@@ -1082,13 +1082,49 @@ class RAGPipeline:
             ))
             all_results.extend(response.results)
         
-        # Deduplicate by chunk_id
+        # Deduplicate by chunk_id, then reject passages that only match broad
+        # legal filler words. This prevents a patent/GI passage from being
+        # presented as evidence for an unrelated Ayurvedic product question.
         seen = set()
         unique_results = []
         for result in all_results:
             if result.chunk.id not in seen:
                 seen.add(result.chunk.id)
                 unique_results.append(result)
+
+        query_terms = set(re.findall(r"[a-z]{4,}", context.original_query.lower()))
+        generic_terms = {
+            "about", "answer", "apply", "authority", "based", "claims",
+            "classified", "combination", "consider", "context", "design",
+            "designed", "evidence", "exact", "explain", "filing", "from",
+            "information", "ingredients", "legal", "licence", "license",
+            "literature", "made", "mentioned", "method", "newly", "patent",
+            "process", "product", "question", "required", "restrictions",
+            "sell", "section", "source", "statute", "testing", "treated",
+            "under", "what", "which", "with",
+        }
+        signal_terms = query_terms - generic_terms
+        if signal_terms:
+            minimum_overlap = 3 if len(signal_terms) >= 6 else 1
+            domain_terms = {
+                "ayurveda", "ayurvedic", "ashwagandha", "cosmetic", "dosage",
+                "extract", "extraction", "formulation", "medicine", "neem",
+                "nutraceutical", "proprietary", "therapeutic", "turmeric",
+                "wellness",
+            }
+            requested_domain_terms = signal_terms & domain_terms
+            unique_results = [
+                result for result in unique_results
+                if (
+                    len(signal_terms & set(re.findall(r"[a-z]{4,}", result.chunk.content.lower())))
+                    >= minimum_overlap
+                    and (
+                        not requested_domain_terms
+                        or len(requested_domain_terms & set(re.findall(r"[a-z]{4,}", result.chunk.content.lower())))
+                        >= min(2, len(requested_domain_terms))
+                    )
+                )
+            ]
         
         # Sort by score
         unique_results.sort(key=lambda r: r.score, reverse=True)
