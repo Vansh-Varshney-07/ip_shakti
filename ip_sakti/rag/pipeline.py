@@ -14,6 +14,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional, Set, Tuple, Union
 
 from ip_sakti.config.loader import Settings, get_settings
