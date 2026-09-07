@@ -1,0 +1,29 @@
+OFFICIAL INDIA PATENT FILING DOCUMENTS
+======================================
+
+These source files were downloaded from the official Intellectual Property
+India website and added to data/corpus/ip_india/guidelines/:
+
+1. patent_office_filing_manual.pdf
+   Official URL:
+   https://ipindia.gov.in/frontend/pdf/patents/Manual_for_Patent_Office_Practice_and_Procedure_.pdf
+   Purpose: Patent Office practice and procedure, including filing guidance and
+   documents commonly required for a patent application.
+
+2. patent_filing_forms_schedule_1.pdf
+   Official URL:
+   https://ipindia.gov.in/frontend/pdf/forms_and_official_fees/Schedule_1.pdf
+   Purpose: Official schedule describing prescribed patent forms and fees under
+   the Patents Rules, 2003.
+
+Official index page:
+https://www.ipindia.gov.in/other-publications
+
+These are guidance and prescribed-form sources, not a patent grant certificate
+and not a certificate for a particular invention. The exact documents required
+depend on the application type, applicant status, inventorship, priority,
+biological-resource disclosure, drawings, sequence listings, and other facts.
+The assistant must present them as a checklist for verification, not as a
+guarantee that filing requirements are complete for every case.
+
+Downloaded: 2026-09-07
