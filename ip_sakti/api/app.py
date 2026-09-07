@@ -18,7 +18,7 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Respon
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -1223,14 +1223,8 @@ async def list_experiments(
 
 @app.get("/", tags=["Root"])
 async def root():
-    """API root endpoint."""
-    return {
-        "name": "IP-SAKTI Sahayak API",
-        "version": "1.0.0",
-        "description": "Indian Intellectual Property Legal Assistant",
-        "docs": "/docs",
-        "health": "/health",
-    }
+    """Open the web application at the API root."""
+    return RedirectResponse(url="/web/", status_code=307)
 
 
 # ============================================================
