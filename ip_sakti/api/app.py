@@ -137,9 +137,13 @@ def _api_authority_tier(value: Any) -> AuthorityTier:
 
 def _citation_model(citation: Dict[str, Any]) -> Citation:
     source_url = citation.get("source_url") or citation.get("canonical_url") or ""
-    source_name = citation.get("source_name") or citation.get("document_type") or "Indexed legal source"
+    source_name = citation.get("source_name") or citation.get("source_path") or citation.get("document_type") or "Indexed legal source"
+    source_name = Path(str(source_name)).name
+    section = citation.get("section")
+    if not section:
+        section = Path(source_name).stem.replace("_", " ").replace("-", " ").title()
     return Citation(
-        legal_citation=citation.get("section") or f"Document {citation.get('document_id', 'unknown')}",
+        legal_citation=str(section),
         source_reference=SourceReference(
             source_id=str(citation.get("document_id") or citation.get("chunk_id")),
             source_name=str(source_name),

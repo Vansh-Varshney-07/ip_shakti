@@ -674,8 +674,9 @@ class LLMGenerator(Generator):
         """Return a relevant, clearly qualified local answer for test mode."""
         if not citations:
             return (
-                "Insufficient directly retrieved evidence to answer this question. "
-                "Test mode is abstaining rather than presenting unrelated passages.",
+                "I could not find enough directly relevant evidence in the indexed "
+                "sources to answer this question safely. Please add or verify the "
+                "authoritative source before relying on a legal conclusion.",
                 0.0,
             )
 
@@ -700,38 +701,48 @@ class LLMGenerator(Generator):
 
         if not relevant:
             return (
-                "No directly relevant indexed passage was found for this question. "
-                "Test mode is abstaining instead of quoting a semantically unrelated source. "
-                "Add or verify the authoritative source before relying on an answer.",
+                "I could not find a directly relevant indexed passage for this "
+                "question. I am not quoting nearby but potentially unrelated law. "
+                "Please add or verify the authoritative source before relying on "
+                "a legal conclusion.",
                 0.0,
             )
 
         lines = [
-            "Test-mode grounded triage (extractive; not an LLM legal opinion).",
+            "Preliminary evidence-based guidance",
             "",
-            f"Detected intent: {getattr(rag_context.query.intent, 'value', 'general_legal')}",
-            f"Requested jurisdiction: {getattr(rag_context.query.jurisdiction, 'value', 'INDIA')}",
+            "The following points are based on the indexed legal material and the "
+            "facts supplied in your question. They are a preliminary research aid, "
+            "not a final legal opinion.",
         ]
         query_lower = query.lower()
         if re.search(r"classical|traditional|recipe|chamanprash|chyawanprash", query_lower):
             lines.extend([
                 "",
-                "Preliminary formulation note: the question describes a potentially "
-                "classical or traditional recipe. The indexed corpus does not contain "
-                "a direct Chamanprash/Chyawanprash monograph, so classical status and "
-                "patentability cannot be certified from these results. Verify the exact "
-                "formula against an authoritative Ayurvedic text, then assess any new "
-                "process, dosage, or composition separately.",
+                "Classification and patentability",
+                "The product may involve a classical or traditional formulation. "
+                "A classical status cannot be confirmed from the retrieved passages "
+                "alone, and the indexed corpus does not contain a direct monograph "
+                "for this named recipe. Verify the exact ingredients, proportions, "
+                "dosage form, indications, and textual reference against an "
+                "authoritative Ayurvedic source. Any genuinely new process, dosage, "
+                "composition, or delivery system must be assessed separately from "
+                "the traditional recipe.",
             ])
-        lines.extend(["", "Most relevant retrieved evidence:"])
+        lines.extend(["", "Relevant source passages"])
         for citation in relevant:
-            source = citation.get("source_name") or citation.get("source_path") or "Indexed source"
+            source = Path(str(citation.get("source_name") or citation.get("source_path") or "Indexed source")).name
             preview = citation.get("content_preview", "").strip()
             lines.append(f"[{citation['id']}] {source}: {preview}")
         lines.extend([
             "",
-            "Next step: inspect the cited primary source and obtain qualified patent "
-            "and regulatory advice before filing or commercialising.",
+            "Recommended next steps",
+            "1. Confirm the exact formulation and its authoritative textual source.",
+            "2. Separate traditional ingredients or steps from any claimed technical "
+            "improvement and document the development history.",
+            "3. Check the current primary statute, rules, and competent registry before "
+            "filing or commercialising.",
+            "4. Obtain qualified patent and regulatory advice for a filing decision.",
             "Information only, not legal, medical, or regulatory advice.",
         ])
         confidence = min(0.72, 0.35 + 0.1 * len(relevant))
@@ -1151,8 +1162,8 @@ class RAGPipeline:
         # An abstention must not be followed by a bibliography of passages
         # that the answer explicitly rejected as irrelevant.
         if context.generated_answer.startswith((
-            "No directly relevant indexed passage",
-            "Insufficient directly retrieved evidence",
+            "I could not find enough directly relevant evidence",
+            "I could not find a directly relevant indexed passage",
         )):
             context.citations = []
             context.context_chunks = []

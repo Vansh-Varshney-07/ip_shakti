@@ -35,3 +35,16 @@ def test_corpus_validator_flags_empty_files(tmp_path):
     report = validate_corpus(tmp_path)
     assert not report["valid"]
     assert report["issues"][0]["issue"] == "zero_byte_file"
+
+
+def test_citation_model_uses_readable_source_name():
+    from ip_sakti.api.app import _citation_model
+
+    citation = _citation_model({
+        "document_id": "internal-id",
+        "source_path": "data/corpus/ip_india/acts/patents_act_1970.txt",
+        "chunk_id": "chunk-id",
+        "source_tier": "TIER_1",
+    })
+    assert citation.legal_citation == "Patents Act 1970"
+    assert citation.source_reference.source_name == "patents_act_1970.txt"
